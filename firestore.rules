@@ -26,6 +26,13 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isFinanceOfficer() {
+      return isSignedIn() && isEmailVerified() && (
+        exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email)).data.role == 'finance'
+      );
+    }
+
     // Association Config Rules
     match /config/association {
       allow read: if true; // Publicly readable
@@ -43,12 +50,13 @@ service cloud.firestore {
 
     // Specialized Accounts
     match /specializedAccounts/{accountId} {
-      allow read, write: if isAdmin();
+      allow get: if true; // Allow lookup for staff login check
+      allow list, write: if isAdmin();
     }
 
     // Finance Ledger
     match /finances/{financeId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isAdmin() || isFinanceOfficer();
     }
 
     // Portal Config Rules

@@ -124,10 +124,11 @@
       "properties": {
         "name": { "type": "string" },
         "email": { "type": "string" },
+        "password": { "type": "string", "description": "Access password for the account" },
         "role": { "type": "string", "enum": ["finance", "admin"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["name", "email", "role"]
+      "required": ["name", "email", "password", "role"]
     },
     "financeEntry": {
       "title": "Finance Entry",

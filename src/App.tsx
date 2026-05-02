@@ -56,7 +56,9 @@ import {
   serverTimestamp,
   getDocFromServer,
   query,
-  orderBy
+  orderBy,
+  where,
+  getDocs
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 
@@ -112,6 +114,7 @@ interface SpecializedAccount {
   id: string;
   name: string;
   email: string;
+  password?: string;
   role: 'finance' | 'admin';
   createdAt: any;
 }
@@ -345,6 +348,50 @@ export default function App() {
   const [sessionFilter, setSessionFilter] = useState('All');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showFullCommittee, setShowFullCommittee] = useState(false);
+
+  const handleStaffLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingInStaff(true);
+    setStaffLoginError(null);
+    try {
+      const docRef = doc(db, 'specializedAccounts', staffLoginForm.email.toLowerCase());
+      const snapshot = await getDocFromServer(docRef);
+      
+      if (snapshot.exists()) {
+        const data = snapshot.data() as SpecializedAccount;
+        if (data.password === staffLoginForm.password) {
+          setSpecializedRole(data.role);
+          sessionStorage.setItem('specializedRole', data.role);
+          sessionStorage.setItem('specializedEmail', data.email);
+          setShowStaffLogin(false);
+          if (data.role === 'finance') setAdminTab('finance');
+          else if (data.role === 'admin') setAdminTab('accounts');
+          setShowAdminDashboard(true);
+        } else {
+          setStaffLoginError('Invalid password. Please try again.');
+        }
+      } else {
+        setStaffLoginError('Account does not exist.');
+      }
+    } catch (err) {
+      console.error(err);
+      setStaffLoginError('Login failed. Please check your connection.');
+    } finally {
+      setIsLoggingInStaff(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setSpecializedRole(null);
+      sessionStorage.removeItem('specializedRole');
+      sessionStorage.removeItem('specializedEmail');
+      setShowAdminDashboard(false);
+    } catch (err) {
+      console.error("Sign out error:", err);
+    }
+  };
   const [showAllProgramsView, setShowAllProgramsView] = useState(false);
   const [showNoticesView, setShowNoticesView] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
@@ -354,6 +401,10 @@ export default function App() {
   // Firebase Auth & Config States
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [specializedRole, setSpecializedRole] = useState<'finance' | 'admin' | null>(() => {
+    const saved = sessionStorage.getItem('specializedRole');
+    return (saved === 'finance' || saved === 'admin') ? saved : null;
+  });
   const [associationConfig, setAssociationConfig] = useState<AssociationConfig>({
     mission: 'To unite electromedical engineers in Rangpur, providing them with technical resources, networking opportunities, and a unified voice to advance the standard of medical equipment maintenance and healthcare delivery in our region.',
     vision: 'We envision a future where every medical facility in Rangpur is supported by skilled, empowered, and innovative electromedical professionals, ensuring world-class healthcare technology is accessible to all citizens of Bangladesh.',
@@ -451,8 +502,15 @@ export default function App() {
   const [accountForm, setAccountForm] = useState({
     name: '',
     email: '',
+    password: '',
     role: 'finance' as 'finance' | 'admin'
   });
+
+  // Specialized Login State
+  const [showStaffLogin, setShowStaffLogin] = useState(false);
+  const [staffLoginForm, setStaffLoginForm] = useState({ email: '', password: '' });
+  const [staffLoginError, setStaffLoginError] = useState<string | null>(null);
+  const [isLoggingInStaff, setIsLoggingInStaff] = useState(false);
 
   // Finance Ledger State
   const [financeEntries, setFinanceEntries] = useState<FinanceEntry[]>([]);
@@ -490,22 +548,39 @@ export default function App() {
     // Auth Listener
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      setIsAdmin(false);
+      
       if (currentUser) {
-        // Check if admin by email or record
+        // 1. Check Super Admin (Hardcoded or collection)
         if (currentUser.email === 'edea.rangpur@gmail.com') {
           setIsAdmin(true);
         } else {
-          const adminRef = doc(db, 'admins', currentUser.uid);
           try {
-            const adminSnap = await getDocFromServer(adminRef);
-            setIsAdmin(adminSnap.exists());
-          } catch (error) {
-            console.error("Error checking admin status", error);
-            setIsAdmin(false);
-          }
+            const adminSnap = await getDocFromServer(doc(db, 'admins', currentUser.uid));
+            if (adminSnap.exists()) setIsAdmin(true);
+          } catch (e) {}
+        }
+
+        // 2. Check Specialized Role (from specializedAccounts via Google Email)
+        // Only if not already set by staff login
+        if (!sessionStorage.getItem('specializedRole')) {
+          try {
+            const q = query(collection(db, 'specializedAccounts'), where('email', '==', currentUser.email));
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+              const data = snapshot.docs[0].data() as SpecializedAccount;
+              setSpecializedRole(data.role);
+              if (data.role === 'finance') {
+                setAdminTab('finance');
+              }
+            }
+          } catch (e) {}
         }
       } else {
-        setIsAdmin(false);
+        // If not logged in to Google, check if specialized session exists
+        if (!sessionStorage.getItem('specializedRole')) {
+          setSpecializedRole(null);
+        }
       }
     });
 
@@ -575,27 +650,38 @@ export default function App() {
       console.error("Programs fetch issue:", error);
     });
 
-    // Specialized Accounts Listener
-    const unsubscribeAccounts = onSnapshot(collection(db, 'specializedAccounts'), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as SpecializedAccount[];
-      setSpecializedAccounts(data);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'specializedAccounts');
-    });
+    // Specialized Accounts Listener (Super Admin only)
+    let unsubscribeAccounts: (() => void) | null = null;
+    if (isAdmin) {
+      unsubscribeAccounts = onSnapshot(collection(db, 'specializedAccounts'), (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as SpecializedAccount[];
+        setSpecializedAccounts(data);
+      }, (error) => {
+        // Silently handle if permissions changed
+        if (!error.message.includes('permission')) {
+          handleFirestoreError(error, OperationType.GET, 'specializedAccounts');
+        }
+      });
+    }
 
-    // Finance Listener
-    const unsubscribeFinances = onSnapshot(query(collection(db, 'finances'), orderBy('date', 'desc')), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as FinanceEntry[];
-      setFinanceEntries(data);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'finances');
-    });
+    // Finance Listener (Finance Officer only)
+    let unsubscribeFinances: (() => void) | null = null;
+    if (specializedRole === 'finance') {
+      unsubscribeFinances = onSnapshot(query(collection(db, 'finances'), orderBy('date', 'desc')), (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as FinanceEntry[];
+        setFinanceEntries(data);
+      }, (error) => {
+        if (!error.message.includes('permission')) {
+          handleFirestoreError(error, OperationType.GET, 'finances');
+        }
+      });
+    }
 
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
@@ -607,10 +693,10 @@ export default function App() {
       unsubscribeConfig();
       unsubscribePortal();
       unsubscribePrograms();
-      unsubscribeAccounts();
-      unsubscribeFinances();
+      unsubscribeAccounts?.();
+      unsubscribeFinances?.();
     };
-  }, [programs.length]);
+  }, [programs.length, isAdmin, specializedRole]);
 
   const featuredProgram = programs.find(p => p.featured) || programs[0];
   
@@ -852,26 +938,51 @@ export default function App() {
                     setShowFullCommittee(false);
                     setShowAllMembers(false);
                     setSelectedProgram(null);
+                    setAdminTab('general');
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }} 
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all font-bold text-xs uppercase tracking-widest ${showAdminDashboard ? 'bg-brand-primary text-white' : 'text-brand-primary hover:bg-brand-primary/5'}`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all font-bold text-xs uppercase tracking-widest ${showAdminDashboard && !specializedRole ? 'bg-brand-primary text-white' : 'text-brand-primary hover:bg-brand-primary/5'}`}
                 >
                   <ShieldCheck size={14} />
                   Dashboard
                 </button>
               )}
 
+              {specializedRole === 'finance' && (
+                <button 
+                  onClick={() => {
+                    setShowAdminDashboard(true);
+                    setShowNoticesView(false);
+                    setShowAllProgramsView(false);
+                    setShowFullCommittee(false);
+                    setShowAllMembers(false);
+                    setSelectedProgram(null);
+                    setAdminTab('finance');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} 
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all font-bold text-xs uppercase tracking-widest ${showAdminDashboard && specializedRole === 'finance' ? 'bg-brand-primary text-white' : 'text-brand-primary hover:bg-brand-primary/5'}`}
+                >
+                  <PieChart size={14} />
+                  Finance Dashboard
+                </button>
+              )}
+
               <div className="flex items-center gap-4">
-                {user ? (
+                {user || specializedRole ? (
                   <div className="flex items-center gap-3">
                     <div className="hidden sm:flex flex-col items-end">
-                      <span className="text-[10px] font-bold text-slate-900 leading-none">{user.displayName}</span>
+                      <span className="text-[10px] font-bold text-slate-900 leading-none">
+                        {user?.displayName || sessionStorage.getItem('specializedEmail')?.split('@')[0] || 'Staff Member'}
+                      </span>
                       {isAdmin && (
                         <span className="text-[8px] font-bold text-brand-primary uppercase tracking-widest mt-0.5">Super Admin</span>
                       )}
+                      {specializedRole && (
+                        <span className="text-[8px] font-bold text-brand-secondary uppercase tracking-widest mt-0.5">{specializedRole} Officer</span>
+                      )}
                     </div>
                     <button 
-                      onClick={() => signOut(auth)}
+                      onClick={handleLogout}
                       className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2 rounded-full transition-all active:scale-95 group"
                       title="Logout"
                     >
@@ -880,8 +991,8 @@ export default function App() {
                   </div>
                 ) : (
                   <button 
-                    onClick={() => signInWithGoogle()}
-                    className="hidden md:flex bg-gradient-to-r from-brand-primary to-brand-secondary text-white px-6 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all hover:shadow-lg hover:scale-110 active:scale-95 items-center gap-2"
+                    onClick={() => setShowStaffLogin(true)}
+                    className="hidden md:flex bg-brand-primary text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-lg shadow-brand-primary/20 items-center gap-2"
                   >
                     <LogIn size={14} />
                     Login / Register
@@ -990,7 +1101,9 @@ export default function App() {
                       setShowFullCommittee(false); 
                       setShowAllMembers(false); 
                       setSelectedProgram(null); 
+                      setAdminTab('general');
                       setIsMenuOpen(false); 
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
                     }} 
                     className="flex items-center gap-2 w-full text-left text-brand-primary font-bold uppercase text-xs tracking-widest pt-4 border-t border-slate-100"
                   >
@@ -998,19 +1111,45 @@ export default function App() {
                     Admin Dashboard
                   </button>
                 )}
+
+                {specializedRole === 'finance' && (
+                  <button 
+                    onClick={() => { 
+                      setShowAdminDashboard(true);
+                      setShowNoticesView(false);
+                      setShowAllProgramsView(false); 
+                      setShowFullCommittee(false); 
+                      setShowAllMembers(false); 
+                      setSelectedProgram(null); 
+                      setAdminTab('finance');
+                      setIsMenuOpen(false); 
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }} 
+                    className="flex items-center gap-2 w-full text-left text-brand-primary font-bold uppercase text-xs tracking-widest pt-4 border-t border-slate-100"
+                  >
+                    <PieChart size={14} />
+                    Finance Dashboard
+                  </button>
+                )}
                 
                 <div className="pt-4 border-t border-slate-100">
-                  {user ? (
+                  {user || specializedRole ? (
                     <div className="space-y-4">
                       <div className="flex items-center gap-3 px-2">
-                        <img src={user.photoURL || undefined} alt="" className="w-10 h-10 rounded-full border-2 border-brand-primary" />
+                        {user?.photoURL ? (
+                          <img src={user.photoURL} alt="" className="w-10 h-10 rounded-full border-2 border-brand-primary" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-brand-primary flex items-center justify-center text-white">
+                            <ShieldCheck size={20} />
+                          </div>
+                        )}
                         <div>
-                          <div className="text-sm font-bold text-slate-900">{user.displayName}</div>
-                          <div className="text-[10px] text-slate-500">{user.email}</div>
+                          <div className="text-sm font-bold text-slate-900">{user?.displayName || specializedRole + ' Officer'}</div>
+                          <div className="text-[10px] text-slate-500">{user?.email || sessionStorage.getItem('specializedEmail')}</div>
                         </div>
                       </div>
                       <button 
-                        onClick={() => signOut(auth)}
+                        onClick={handleLogout}
                         className="w-full bg-slate-100 text-slate-600 py-3 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2"
                       >
                         <LogOut size={16} />
@@ -1019,8 +1158,11 @@ export default function App() {
                     </div>
                   ) : (
                     <button 
-                      onClick={() => signInWithGoogle()}
-                      className="w-full bg-gradient-to-r from-brand-primary to-brand-secondary text-white py-3 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg"
+                      onClick={() => {
+                        setShowStaffLogin(true);
+                        setIsMenuOpen(false);
+                      }}
+                      className="w-full bg-brand-primary text-white py-4 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-brand-primary/20"
                     >
                       <LogIn size={16} />
                       Login / Register
@@ -2179,17 +2321,23 @@ export default function App() {
                   <div className="h-1 w-6 bg-brand-primary rounded-full" />
                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary">Control Center</span>
                 </div>
-                <h1 className="text-4xl font-display font-medium text-slate-900 italic font-bold">Admin Dashboard</h1>
-                <p className="text-slate-500 text-sm mt-1">Manage association content and portal settings.</p>
+                <h1 className="text-4xl font-display font-medium text-slate-900 italic font-bold">
+                  {specializedRole === 'finance' ? 'Finance Dashboard' : 'Admin Dashboard'}
+                </h1>
+                <p className="text-slate-500 text-sm mt-1">
+                  {specializedRole === 'finance' 
+                    ? 'Track association income and expenditures.' 
+                    : 'Manage association content and specialized accounts.'}
+                </p>
               </div>
 
               <div className="flex items-center gap-4">
                 <div className="bg-white px-6 py-3 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-brand-primary">
-                    <ShieldCheck size={20} />
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${specializedRole === 'finance' ? 'bg-brand-secondary text-white' : 'bg-slate-50 text-brand-primary'}`}>
+                    {specializedRole === 'finance' ? <PieChart size={20} /> : <ShieldCheck size={20} />}
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-slate-900 leading-none">Super Admin Access</div>
+                    <div className="text-xs font-bold text-slate-900 leading-none capitalize">{specializedRole || 'Super Admin'} Access</div>
                     <div className="text-[10px] text-slate-400 mt-1 uppercase font-black tracking-tighter">Identity Verified</div>
                   </div>
                 </div>
@@ -2199,49 +2347,61 @@ export default function App() {
             <div className="grid lg:grid-cols-4 gap-8">
               {/* Sidebar Tabs */}
               <div className="lg:col-span-1 space-y-2">
-                <button 
-                  onClick={() => setAdminTab('general')}
-                  className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'general' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                >
-                  <Settings size={18} />
-                  <span className="font-bold text-sm">General Settings</span>
-                </button>
-                <button 
-                  onClick={() => setAdminTab('programs')}
-                  className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'programs' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                >
-                  <Calendar size={18} />
-                  <span className="font-bold text-sm">Program Management</span>
-                </button>
-                <button 
-                  onClick={() => setAdminTab('portal')}
-                  className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'portal' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                >
-                  <Monitor size={18} />
-                  <span className="font-bold text-sm">Portal Settings</span>
-                </button>
-                <button 
-                  onClick={() => setAdminTab('accounts')}
-                  className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'accounts' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                >
-                  <UserPlus size={18} />
-                  <span className="font-bold text-sm">Specialized Accounts</span>
-                </button>
-                <button 
-                  onClick={() => setAdminTab('finance')}
-                  className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'finance' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                >
-                  <PieChart size={18} />
-                  <span className="font-bold text-sm">Finances (Account Management)</span>
-                </button>
-                <button className="w-full flex items-center gap-4 p-4 bg-white text-slate-300 rounded-2xl cursor-not-allowed border border-slate-50 opacity-50">
-                  <FileText size={18} />
-                  <span className="font-bold text-sm">Notice Management</span>
-                </button>
-                <button className="w-full flex items-center gap-4 p-4 bg-white text-slate-300 rounded-2xl cursor-not-allowed border border-slate-50 opacity-50">
-                  <Users size={18} />
-                  <span className="font-bold text-sm">Member Approvals</span>
-                </button>
+                {isAdmin && (
+                  <>
+                    <button 
+                      onClick={() => setAdminTab('general')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'general' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Settings size={18} />
+                      <span className="font-bold text-sm">General Settings</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('programs')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'programs' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Calendar size={18} />
+                      <span className="font-bold text-sm">Program Management</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('portal')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'portal' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Monitor size={18} />
+                      <span className="font-bold text-sm">Portal Settings</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('accounts')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'accounts' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <UserPlus size={18} />
+                      <span className="font-bold text-sm">Specialized Accounts</span>
+                    </button>
+                  </>
+                )}
+                
+                {specializedRole === 'finance' && (
+                  <button 
+                    onClick={() => setAdminTab('finance')}
+                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'finance' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                  >
+                    <PieChart size={18} />
+                    <span className="font-bold text-sm">Finances</span>
+                  </button>
+                )}
+
+                {isAdmin && (
+                  <>
+                    <button className="w-full flex items-center gap-4 p-4 bg-white text-slate-300 rounded-2xl cursor-not-allowed border border-slate-50 opacity-50">
+                      <FileText size={18} />
+                      <span className="font-bold text-sm">Notice Management</span>
+                    </button>
+                    <button className="w-full flex items-center gap-4 p-4 bg-white text-slate-300 rounded-2xl cursor-not-allowed border border-slate-50 opacity-50">
+                      <Users size={18} />
+                      <span className="font-bold text-sm">Member Approvals</span>
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Content Area */}
@@ -2630,28 +2790,40 @@ export default function App() {
                                 <option value="admin">System Admin</option>
                               </select>
                             </div>
-                            <div className="flex items-end">
-                              <button 
-                                onClick={async () => {
-                                  if (!accountForm.name || !accountForm.email) return alert('Name and Email are required');
-                                  try {
-                                    await addDoc(collection(db, 'specializedAccounts'), {
-                                      ...accountForm,
-                                      createdAt: serverTimestamp()
-                                    });
-                                    setAccountForm({ name: '', email: '', role: 'finance' });
-                                    setShowAccountForm(false);
-                                    setSaveStatus({ type: 'success', message: 'Account profile created successfully' });
-                                    setTimeout(() => setSaveStatus(null), 3000);
-                                  } catch (err) {
-                                    handleFirestoreError(err, OperationType.CREATE, 'specializedAccounts');
-                                  }
-                                }}
-                                className="w-full bg-slate-900 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-brand-primary transition-all"
-                              >
-                                Create Account Profile
-                              </button>
+                            <div className="space-y-4">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Access Password</label>
+                              <input 
+                                type="password"
+                                value={accountForm.password}
+                                onChange={(e) => setAccountForm({...accountForm, password: e.target.value})}
+                                className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                placeholder="Set access password..."
+                              />
                             </div>
+                          </div>
+                          <div className="flex justify-end pt-4">
+                            <button 
+                              onClick={async () => {
+                                if (!accountForm.name || !accountForm.email || !accountForm.password) return alert('Name, Email, and Password are required');
+                                try {
+                                  // Use email as ID for security rules efficiency
+                                  await setDoc(doc(db, 'specializedAccounts', accountForm.email.toLowerCase()), {
+                                    ...accountForm,
+                                    email: accountForm.email.toLowerCase(),
+                                    createdAt: serverTimestamp()
+                                  });
+                                  setAccountForm({ name: '', email: '', password: '', role: 'finance' });
+                                  setShowAccountForm(false);
+                                  setSaveStatus({ id: 'account', type: 'success', message: 'Account profile created successfully' });
+                                  setTimeout(() => setSaveStatus(null), 3000);
+                                } catch (err) {
+                                  handleFirestoreError(err, OperationType.CREATE, 'specializedAccounts');
+                                }
+                              }}
+                              className="bg-slate-900 text-white px-10 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-brand-primary transition-all shadow-lg"
+                            >
+                              Create Account Profile
+                            </button>
                           </div>
                         </div>
                       )}
@@ -3763,6 +3935,117 @@ export default function App() {
         </div>
       </footer>
 
+      {/* Specialized Staff Login Modal */}
+      <AnimatePresence>
+        {showStaffLogin && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowStaffLogin(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-10">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-brand-primary/10 rounded-2xl flex items-center justify-center text-brand-primary">
+                      <LogIn size={24} />
+                    </div>
+                    <div>
+                      <h3 className="font-display font-bold text-xl text-slate-900 leading-none">EDEA Login</h3>
+                      <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-2">Association Portal Access</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowStaffLogin(false)}
+                    className="p-2 text-slate-300 hover:text-slate-900 transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="space-y-8">
+                  {/* Option 1: Google */}
+                  <button 
+                    onClick={() => {
+                      setShowStaffLogin(false);
+                      signInWithGoogle();
+                    }}
+                    className="w-full flex items-center justify-center gap-4 bg-white border-2 border-slate-100 text-slate-700 py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:border-brand-primary hover:bg-slate-50 transition-all group"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                      <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"/>
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    Continue with Google
+                  </button>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-100"></div>
+                    </div>
+                    <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest text-slate-300">
+                      <span className="bg-white px-4">or staff login</span>
+                    </div>
+                  </div>
+
+                  {/* Option 2: Staff */}
+                  <form onSubmit={handleStaffLogin} className="space-y-4">
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                        <input 
+                          type="email"
+                          required
+                          value={staffLoginForm.email}
+                          onChange={(e) => setStaffLoginForm({...staffLoginForm, email: e.target.value})}
+                          className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                          placeholder="Staff Email"
+                        />
+                      </div>
+                      <div className="relative">
+                        <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                        <input 
+                          type="password"
+                          required
+                          value={staffLoginForm.password}
+                          onChange={(e) => setStaffLoginForm({...staffLoginForm, password: e.target.value})}
+                          className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                          placeholder="Staff Password"
+                        />
+                      </div>
+                    </div>
+
+                    {staffLoginError && (
+                      <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-bold flex items-center gap-2">
+                        <Info size={14} />
+                        {staffLoginError}
+                      </div>
+                    )}
+
+                    <button 
+                      type="submit"
+                      disabled={isLoggingInStaff}
+                      className="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary transition-all disabled:opacity-50"
+                    >
+                      {isLoggingInStaff ? <Loader2 className="animate-spin" size={16} /> : "Login to Portal"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
