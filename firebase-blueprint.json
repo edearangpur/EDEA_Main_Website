@@ -1,0 +1,174 @@
+{
+  "entities": {
+    "associationConfig": {
+      "title": "Association Configuration",
+      "description": "Global settings for the association including mission and vision",
+      "type": "object",
+      "properties": {
+        "mission": {
+          "type": "string",
+          "description": "The mission statement of the association"
+        },
+        "vision": {
+          "type": "string",
+          "description": "The vision statement of the association"
+        },
+        "about": {
+          "type": "string",
+          "description": "Information about the association"
+        },
+        "categories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Customizable list of program categories"
+        },
+        "heroImages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of URLs for the homepage hero slider"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last updated timestamp"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the admin who updated it"
+        }
+      },
+      "required": ["mission", "vision", "about", "updatedAt", "updatedBy"]
+    },
+    "admin": {
+      "title": "Admin User",
+      "description": "Users with administrative privileges",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "The email of the admin"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["super_admin"],
+          "description": "The role of the admin"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "program": {
+      "title": "Program",
+      "description": "Association programs and events",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "date": { "type": "string" },
+        "location": { "type": "string" },
+        "description": { "type": "string", "description": "Short description for cards (bullet points allowed, 150 chars recommended)" },
+        "details": { "type": "string", "description": "Extended details (HTML supported, bullet points allowed)" },
+        "image": { "type": "string" },
+        "status": { "type": "string", "enum": ["upcoming", "completed"] },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "income": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item": { "type": "string" },
+                  "amount": { "type": "number" }
+                }
+              }
+            },
+            "expense": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item": { "type": "string" },
+                  "amount": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "date", "location", "description", "image", "status"]
+    },
+    "portalConfig": {
+      "title": "Portal Configuration",
+      "description": "Settings for the ICT Division & Portal section",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "secretaryName": { "type": "string" },
+        "secretaryRole": { "type": "string" },
+        "secretaryInstitution": { "type": "string" },
+        "secretaryPhone": { "type": "string" },
+        "secretaryEmail": { "type": "string" },
+        "secretaryImage": { "type": "string" },
+        "description": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["title", "secretaryName", "secretaryRole", "secretaryInstitution", "secretaryPhone", "secretaryEmail", "secretaryImage", "description", "updatedAt", "updatedBy"]
+    },
+    "specializedAccount": {
+      "title": "Specialized Account",
+      "description": "Accounts for specific administrative roles",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["finance", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "role"]
+    },
+    "financeEntry": {
+      "title": "Finance Entry",
+      "description": "Financial ledger transactions",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "amount", "description", "date", "category", "recordedBy"]
+    }
+  },
+  "firestore": {
+    "config/association": {
+      "schema": "associationConfig",
+      "description": "Single document for association mission and vision"
+    },
+    "config/portal": {
+      "schema": "portalConfig",
+      "description": "Single document for ICT portal settings"
+    },
+    "programs/{programId}": {
+      "schema": "program",
+      "description": "Collection of events and programs"
+    },
+    "admins/{adminId}": {
+      "schema": "admin",
+      "description": "Collection of admin users"
+    },
+    "specializedAccounts/{accountId}": {
+      "schema": "specializedAccount",
+      "description": "Collection of specialized accounts"
+    },
+    "finances/{financeId}": {
+      "schema": "financeEntry",
+      "description": "Financial ledger transactions"
+    }
+  }
+}
