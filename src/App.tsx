@@ -15,6 +15,10 @@ import {
   Menu,
   Monitor,
   X,
+  Clock,
+  Download,
+  Facebook,
+  Maximize2,
   Stethoscope,
   Cpu,
   BookOpen,
@@ -95,9 +99,10 @@ interface Notice {
   title: string;
   date: string;
   description: string;
-  category: string;
-  image?: string;
-  pdfUrl?: string;
+  category: 'General' | 'Event' | 'Committee' | 'Financial';
+  pdfUrl?: string; // Optional now
+  fbLink?: string; // New: Facebook post link
+  image?: string; // New: Image URL from Cloudinary
 }
 
 interface Member {
@@ -358,6 +363,7 @@ export default function App() {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [noticeSearch, setNoticeSearch] = useState('');
   const [noticeCategoryFilter, setNoticeCategoryFilter] = useState('All');
+  const [selectedNoticeImage, setSelectedNoticeImage] = useState<string | null>(null);
 
   // Firebase Auth & Config States
   const [user, setUser] = useState<User | null>(null);
@@ -455,17 +461,17 @@ export default function App() {
   // Local Programs State
   const [programs, setPrograms] = useState<Program[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
-  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'notices' | 'portal' | 'accounts' | 'finance' | 'profile'>('general');
+  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'profile' | 'notices'>('general');
   const [isAddingProgram, setIsAddingProgram] = useState(false);
   const [isAddingNotice, setIsAddingNotice] = useState(false);
   const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
   const [noticeForm, setNoticeForm] = useState({
     title: '',
     date: new Date().toISOString().split('T')[0],
-    category: 'General',
+    category: 'General' as Notice['category'],
     description: '',
-    image: '',
-    pdfUrl: ''
+    fbLink: '',
+    image: ''
   });
   
   // Specialized Accounts State
@@ -624,17 +630,6 @@ export default function App() {
       console.error("Programs fetch issue:", error);
     });
 
-    // Notices Listener
-    const unsubscribeNotices = onSnapshot(query(collection(db, 'notices'), orderBy('date', 'desc')), (snapshot) => {
-      const noticesData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Notice[];
-      setNotices(noticesData);
-    }, (error) => {
-      console.error("Notices fetch issue:", error);
-    });
-
     // Specialized Accounts Listener (Super Admin only)
     let unsubscribeAccounts: (() => void) | null = null;
     if (isAdmin) {
@@ -667,6 +662,17 @@ export default function App() {
         }
       });
     }
+
+    // Notices Listener
+    const unsubscribeNotices = onSnapshot(query(collection(db, 'notices'), orderBy('date', 'desc')), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Notice[];
+      setNotices(data);
+    }, (error) => {
+      console.error("Notices fetch issue:", error);
+    });
 
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
@@ -701,7 +707,84 @@ export default function App() {
     const matchesSearch = n.title.toLowerCase().includes(noticeSearch.toLowerCase());
     const matchesCategory = noticeCategoryFilter === 'All' || n.category === noticeCategoryFilter;
     return matchesSearch && matchesCategory;
-  }); // Date sorting is handled by Firestore query orderby('date', 'desc')
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const handleSaveNotice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !isAdmin) return;
+
+    const path = 'notices';
+    try {
+      const data = {
+        ...noticeForm,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid
+      };
+
+      if (editingNotice) {
+        await setDoc(doc(db, 'notices', editingNotice.id), data);
+      } else {
+        await addDoc(collection(db, 'notices'), {
+          ...data,
+          createdAt: serverTimestamp()
+        });
+      }
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: editingNotice ? 'Notice updated successfully!' : 'Notice published successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+      setIsAddingNotice(false);
+      setEditingNotice(null);
+      setNoticeForm({
+        title: '',
+        date: new Date().toISOString().split('T')[0],
+        category: 'General',
+        description: '',
+        fbLink: '',
+        image: ''
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
+  const handleDeleteNotice = async (id: string) => {
+    if (!isAdmin || !confirm('Are you sure you want to delete this notice?')) return;
+    try {
+      await deleteDoc(doc(db, 'notices', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'notices');
+    }
+  };
+
+  const openEditNotice = (n: Notice) => {
+    setEditingNotice(n);
+    setNoticeForm({
+      title: n.title,
+      category: n.category,
+      date: n.date,
+      description: n.description,
+      fbLink: n.fbLink || '',
+      image: n.image || ''
+    });
+    setIsAddingNotice(true);
+  };
+
+  const handleDownloadImage = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename || 'notice-image';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error('Download failed:', error);
+      window.open(url, '_blank');
+    }
+  };
 
   const handleSaveConfig = async () => {
     if (!user || !isAdmin) return;
@@ -811,65 +894,6 @@ export default function App() {
       budget: p.budget || { income: [], expense: [] }
     });
     setIsAddingProgram(true);
-  };
-
-  const handleSaveNotice = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || (!isAdmin && specializedRole !== 'secretary')) return;
-
-    const path = 'notices';
-    try {
-      const nData = {
-        ...noticeForm,
-        updatedAt: serverTimestamp(),
-        updatedBy: user.uid
-      };
-
-      if (editingNotice) {
-        await setDoc(doc(db, 'notices', editingNotice.id), nData);
-      } else {
-        await addDoc(collection(db, 'notices'), {
-          ...nData,
-          createdAt: serverTimestamp()
-        });
-      }
-      setSaveStatus({ id: Date.now().toString(), type: 'success', message: editingNotice ? 'Notice updated successfully!' : 'New notice posted successfully!' });
-      setTimeout(() => setSaveStatus(null), 3000);
-      setIsAddingNotice(false);
-      setEditingNotice(null);
-      setNoticeForm({ 
-        title: '', 
-        date: new Date().toISOString().split('T')[0], 
-        category: 'General', 
-        description: '', 
-        image: '', 
-        pdfUrl: '' 
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  };
-
-  const handleDeleteNotice = async (id: string) => {
-    if (!user || (!isAdmin && specializedRole !== 'secretary') || !confirm('Are you sure you want to delete this notice?')) return;
-    try {
-      await deleteDoc(doc(db, 'notices', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'notices');
-    }
-  };
-
-  const openEditNotice = (n: Notice) => {
-    setEditingNotice(n);
-    setNoticeForm({
-      title: n.title,
-      category: n.category,
-      date: n.date,
-      description: n.description,
-      image: n.image || '',
-      pdfUrl: n.pdfUrl || ''
-    });
-    setIsAddingNotice(true);
   };
 
   return (
@@ -2479,22 +2503,13 @@ export default function App() {
                 )}
 
                 {specializedRole === 'secretary' && (
-                  <>
-                    <button 
-                      onClick={() => setAdminTab('profile')}
-                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'profile' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                    >
-                      <ShieldCheck size={18} />
-                      <span className="font-bold text-sm">Secretary Profile</span>
-                    </button>
-                    <button 
-                      onClick={() => setAdminTab('notices')}
-                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'notices' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                    >
-                      <FileText size={18} />
-                      <span className="font-bold text-sm">Notice Management</span>
-                    </button>
-                  </>
+                  <button 
+                    onClick={() => setAdminTab('profile')}
+                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'profile' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                  >
+                    <ShieldCheck size={18} />
+                    <span className="font-bold text-sm">Secretary Profile</span>
+                  </button>
                 )}
 
                 {isAdmin && (
@@ -2875,6 +2890,232 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                ) : adminTab === 'notices' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                    {isAddingNotice ? (
+                      <div className="p-8">
+                        <div className="flex items-center gap-4 mb-8">
+                          <button 
+                            onClick={() => { setIsAddingNotice(false); setEditingNotice(null); }}
+                            className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 transition-all"
+                          >
+                            <ArrowLeft size={20} />
+                          </button>
+                          <div>
+                            <h3 className="font-display font-bold text-xl text-slate-900">{editingNotice ? 'Edit Notice' : 'Publish New Notice'}</h3>
+                            <p className="text-xs text-slate-500">All fields marked with * are required</p>
+                          </div>
+                        </div>
+
+                        <form onSubmit={handleSaveNotice} className="space-y-6">
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Title *</label>
+                              <input 
+                                required
+                                type="text"
+                                value={noticeForm.title}
+                                onChange={(e) => setNoticeForm({...noticeForm, title: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold"
+                                placeholder="e.g., Annual General Meeting 2024"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Category *</label>
+                              <select 
+                                required
+                                value={noticeForm.category}
+                                onChange={(e) => setNoticeForm({...noticeForm, category: e.target.value as any})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                              >
+                                <option value="General">General Notice</option>
+                                <option value="Event">Event Announcement</option>
+                                <option value="Committee">Committee Notice</option>
+                                <option value="Financial">Financial Statement</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Display Date *</label>
+                              <input 
+                                required
+                                type="date"
+                                value={noticeForm.date}
+                                onChange={(e) => setNoticeForm({...noticeForm, date: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Facebook Post Link</label>
+                              <input 
+                                type="url"
+                                value={noticeForm.fbLink}
+                                onChange={(e) => setNoticeForm({...noticeForm, fbLink: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                                placeholder="https://facebook.com/..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Description *</label>
+                            <textarea 
+                              required
+                              value={noticeForm.description}
+                              onChange={(e) => setNoticeForm({...noticeForm, description: e.target.value})}
+                              className="w-full h-32 p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                              placeholder="Brief summary of the notice..."
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Picture / Attachment</label>
+                            <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                              <div className="w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-sm shrink-0 bg-white">
+                                {noticeForm.image ? (
+                                  <img src={noticeForm.image} alt="Notice Preview" className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <ImageIcon className="text-slate-200" size={32} />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex-grow space-y-2">
+                                <input 
+                                  type="file"
+                                  id="notice-image-upload"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      try {
+                                        setIsUploading('notice');
+                                        const url = await uploadImage(file);
+                                        setNoticeForm({...noticeForm, image: url});
+                                      } catch (err) {
+                                        alert(err instanceof Error ? err.message : 'Upload failed');
+                                      } finally {
+                                        setIsUploading(null);
+                                      }
+                                    }
+                                  }}
+                                />
+                                <label 
+                                  htmlFor="notice-image-upload"
+                                  className="flex items-center justify-center gap-3 px-6 py-3 bg-white border border-slate-100 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-900 hover:text-white transition-all cursor-pointer shadow-sm group"
+                                >
+                                  {isUploading === 'notice' ? (
+                                    <Loader2 size={16} className="animate-spin text-brand-primary" />
+                                  ) : (
+                                    <Upload size={16} className="group-hover:scale-110 transition-transform" />
+                                  )}
+                                  {isUploading === 'notice' ? 'Uploading...' : 'Upload Notice Picture'}
+                                </label>
+                                <p className="text-[10px] text-slate-400 font-medium">Recommended: High quality JPG/PNG. This will be the main visual for the notice.</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
+                            <button 
+                              type="button"
+                              onClick={() => { setIsAddingNotice(false); setEditingNotice(null); }}
+                              className="px-8 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all"
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              type="submit"
+                              className="flex items-center gap-3 bg-brand-primary text-white px-12 py-3 rounded-xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            >
+                              <Save size={16} />
+                              {editingNotice ? 'Update Notice' : 'Publish Notice'}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    ) : (
+                      <div className="p-8 space-y-6">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="font-display font-medium text-2xl text-slate-900 italic font-bold">Manage Notice Board</h3>
+                            <p className="text-xs text-slate-500">Create and edit official association notices</p>
+                          </div>
+                          <button 
+                            onClick={() => setIsAddingNotice(true)}
+                            className="bg-brand-primary text-white px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest flex items-center gap-2 hover:shadow-lg transition-all"
+                          >
+                            <Plus size={16} />
+                            Create Notice
+                          </button>
+                        </div>
+
+                        {notices.length === 0 ? (
+                          <div className="bg-white border-2 border-dashed border-slate-100 rounded-[2rem] p-20 text-center">
+                            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                              <FileText size={40} />
+                            </div>
+                            <h4 className="text-xl font-bold text-slate-900 mb-2">Notice Board is empty</h4>
+                            <p className="text-slate-500 mb-8 max-w-sm mx-auto">Publish your first official notice to inform members about updates and events.</p>
+                            <button 
+                              onClick={() => setIsAddingNotice(true)}
+                              className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-bold uppercase tracking-widest"
+                            >
+                              Create First Notice
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid gap-4">
+                            {notices.map(n => (
+                              <div key={n.id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between group hover:border-brand-primary/30 transition-all">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-50 shrink-0 flex items-center justify-center">
+                                    {n.image ? (
+                                      <img src={n.image} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <FileText className="text-slate-300" size={20} />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                                        n.category === 'Financial' ? 'text-red-500 bg-red-50' :
+                                        n.category === 'Event' ? 'text-green-500 bg-green-50' :
+                                        n.category === 'Committee' ? 'text-blue-500 bg-blue-50' :
+                                        'text-slate-500 bg-slate-100'
+                                      }`}>
+                                        {n.category}
+                                      </span>
+                                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{n.date}</span>
+                                    </div>
+                                    <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors text-sm">{n.title}</h4>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <button 
+                                    onClick={() => openEditNotice(n)}
+                                    className="p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-xl transition-all"
+                                  >
+                                    <Settings size={18} />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteNotice(n.id)}
+                                    className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                  >
+                                    <Trash2 size={18} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 ) : adminTab === 'accounts' ? (
                   <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
                     <div className="p-8 border-b border-slate-50 flex items-center justify-between">
@@ -3180,226 +3421,6 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                  </div>
-                ) : adminTab === 'notices' ? (
-                  <div className="space-y-6">
-                    {isAddingNotice ? (
-                      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-                        <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-                          <h3 className="font-display font-bold text-xl text-slate-900">
-                            {editingNotice ? 'Edit Notice' : 'Post New Notice'}
-                          </h3>
-                          <button onClick={() => { setIsAddingNotice(false); setEditingNotice(null); }} className="text-slate-400 hover:text-slate-900">
-                            <X size={24} />
-                          </button>
-                        </div>
-                        
-                        <form onSubmit={handleSaveNotice} className="p-8 space-y-6">
-                          <div className="grid md:grid-cols-2 gap-6">
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Title</label>
-                              <input 
-                                required
-                                value={noticeForm.title}
-                                onChange={(e) => setNoticeForm({...noticeForm, title: e.target.value})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                                placeholder="e.g. Annual General Meeting 2024"
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
-                              <select 
-                                required
-                                value={noticeForm.category}
-                                onChange={(e) => setNoticeForm({...noticeForm, category: e.target.value})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                              >
-                                <option value="General">General</option>
-                                <option value="Event">Event</option>
-                                <option value="Committee">Committee</option>
-                                <option value="Financial">Financial</option>
-                                <option value="Urgent">Urgent</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <div className="grid md:grid-cols-2 gap-6">
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
-                              <input 
-                                required
-                                type="date"
-                                value={noticeForm.date}
-                                onChange={(e) => setNoticeForm({...noticeForm, date: e.target.value})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">PDF Document URL (Optional)</label>
-                              <input 
-                                value={noticeForm.pdfUrl}
-                                onChange={(e) => setNoticeForm({...noticeForm, pdfUrl: e.target.value})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                                placeholder="Link to official document..."
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-4">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Attachment / Picture</label>
-                            <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-                              {noticeForm.image ? (
-                                <div className="w-32 h-20 rounded-xl overflow-hidden border-2 border-white shadow-sm shrink-0">
-                                  <img src={noticeForm.image} alt="Notice Preview" className="w-full h-full object-cover" />
-                                </div>
-                              ) : (
-                                <div className="w-32 h-20 rounded-xl bg-slate-100 border-2 border-white flex items-center justify-center shrink-0">
-                                  <ImageIcon className="text-slate-300" size={24} />
-                                </div>
-                              )}
-                              <div className="flex-grow space-y-2">
-                                <input 
-                                  type="file"
-                                  id="notice-picture-upload"
-                                  className="hidden"
-                                  accept="image/*"
-                                  onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) {
-                                      try {
-                                        setIsUploading('notice');
-                                        const url = await uploadImage(file);
-                                        setNoticeForm({...noticeForm, image: url});
-                                      } catch (err) {
-                                        alert(err instanceof Error ? err.message : 'Upload failed');
-                                      } finally {
-                                        setIsUploading(null);
-                                      }
-                                    }
-                                  }}
-                                />
-                                <label 
-                                  htmlFor="notice-picture-upload"
-                                  className="flex items-center justify-center gap-3 px-6 py-3 bg-white border border-slate-100 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-900 hover:text-white transition-all cursor-pointer shadow-sm group"
-                                >
-                                  {isUploading === 'notice' ? (
-                                    <Loader2 size={16} className="animate-spin text-brand-primary" />
-                                  ) : (
-                                    <Upload size={16} className="group-hover:scale-110 transition-transform" />
-                                  )}
-                                  {isUploading === 'notice' ? 'Uploading...' : 'Upload Notice Image'}
-                                </label>
-                                <p className="text-[10px] text-slate-400">Upload a picture of the notice or related visual. Saved in Cloudinary.</p>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Content / Description</label>
-                            <textarea 
-                              required
-                              value={noticeForm.description}
-                              onChange={(e) => setNoticeForm({...noticeForm, description: e.target.value})}
-                              className="w-full h-32 p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                              placeholder="Full notice message..."
-                            />
-                          </div>
-
-                          <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
-                            <button 
-                              type="button"
-                              onClick={() => { setIsAddingNotice(false); setEditingNotice(null); }}
-                              className="px-8 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all"
-                            >
-                              Cancel
-                            </button>
-                            <button 
-                              type="submit"
-                              className="flex items-center gap-3 bg-brand-primary text-white px-12 py-3 rounded-xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
-                            >
-                              <Save size={16} />
-                              {editingNotice ? 'Update Notice' : 'Post Notice'}
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                    ) : (
-                      <div className="space-y-6">
-                        <div className="flex items-center justify-between">
-                          <h3 className="font-display font-bold text-2xl text-slate-900">Notice Board Records</h3>
-                          <button 
-                            onClick={() => setIsAddingNotice(true)}
-                            className="bg-brand-primary text-white px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest flex items-center gap-2 hover:shadow-lg transition-all"
-                          >
-                            <Plus size={16} />
-                            Add New Notice
-                          </button>
-                        </div>
-
-                        {notices.length === 0 ? (
-                          <div className="bg-white border-2 border-dashed border-slate-100 rounded-[2rem] p-20 text-center">
-                            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
-                              <FileText size={40} />
-                            </div>
-                            <h4 className="text-xl font-bold text-slate-900 mb-2">No notices found</h4>
-                            <p className="text-slate-500 mb-8 max-w-sm mx-auto">Post your first notice to keep members informed.</p>
-                            <button 
-                              onClick={() => setIsAddingNotice(true)}
-                              className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-bold uppercase tracking-widest"
-                            >
-                              Post First Notice
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="grid gap-4">
-                            {notices.map(n => (
-                              <div key={n.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between group hover:border-brand-primary/30 transition-all">
-                                <div className="flex items-center gap-6">
-                                  <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-50 shrink-0 flex items-center justify-center text-slate-400 group-hover:text-brand-primary group-hover:bg-brand-primary/5 transition-all">
-                                    {n.image ? (
-                                      <img src={n.image} alt="" className="w-full h-full object-cover" />
-                                    ) : (
-                                      <FileText size={24} />
-                                    )}
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
-                                        n.category === 'Financial' ? 'text-red-500 bg-red-50' :
-                                        n.category === 'Event' ? 'text-green-500 bg-green-50' :
-                                        n.category === 'Committee' ? 'text-blue-500 bg-blue-50' :
-                                        'text-slate-500 bg-slate-100'
-                                      }`}>
-                                        {n.category}
-                                      </span>
-                                      <span className="text-[10px] text-slate-300 font-medium">{n.date}</span>
-                                    </div>
-                                    <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{n.title}</h4>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <button 
-                                    onClick={() => openEditNotice(n)}
-                                    className="p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-xl transition-all"
-                                    title="Edit"
-                                  >
-                                    <Settings size={18} />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteNotice(n.id)}
-                                    className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                                    title="Delete"
-                                  >
-                                    <Trash2 size={18} />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 ) : adminTab === 'programs' ? (
                   <div className="space-y-6">
@@ -3963,133 +3984,231 @@ export default function App() {
         )}
 
         {showNoticesView && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8 md:py-12">
-            {/* Notices Header */}
-            <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm mb-8">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="h-[2px] w-6 bg-brand-primary" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-brand-primary">Official Portal</span>
-                  </div>
-                  <h2 className="text-2xl md:text-4xl font-display font-medium text-slate-900 italic font-bold">Notice Board</h2>
-                  <p className="text-slate-500 text-sm mt-1">Access all official announcements and documents</p>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-                  <div className="relative flex-1 w-full sm:max-w-xs">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                    <input 
-                      type="text" 
-                      placeholder="Search notices..." 
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all text-sm"
-                      value={noticeSearch}
-                      onChange={(e) => setNoticeSearch(e.target.value)}
-                    />
-                  </div>
-                  <div className="relative w-full sm:w-44">
-                    <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                    <select 
-                      value={noticeCategoryFilter}
-                      onChange={(e) => setNoticeCategoryFilter(e.target.value)}
-                      className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all text-sm appearance-none cursor-pointer font-medium"
+          <div className="max-w-7xl mx-auto px-4 sm:px-8 py-4 md:py-8">
+            {/* Image Lightbox */}
+            <AnimatePresence>
+              {selectedNoticeImage && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/95 backdrop-blur-md"
+                  onClick={() => setSelectedNoticeImage(null)}
+                >
+                  <motion.div 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    className="relative max-w-5xl w-full flex flex-col items-center"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button 
+                      onClick={() => setSelectedNoticeImage(null)}
+                      className="absolute -top-12 right-0 text-white/60 hover:text-white transition-colors"
                     >
-                      <option value="All">All Categories</option>
-                      <option value="General">General</option>
-                      <option value="Event">Event</option>
-                      <option value="Committee">Committee</option>
-                      <option value="Financial">Financial</option>
-                    </select>
-                    <ChevronRight size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 rotate-90" />
-                  </div>
+                      <X size={32} />
+                    </button>
+                    
+                    <img 
+                      src={selectedNoticeImage} 
+                      alt="Notice Detail" 
+                      className="w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl"
+                    />
+                    
+                    <div className="mt-8">
+                      <a 
+                        href={selectedNoticeImage} 
+                        download="notice-attachment"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-3 bg-white text-slate-900 px-8 py-3 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-brand-primary hover:text-white transition-all shadow-xl"
+                      >
+                        <Download size={18} />
+                        Download Image
+                      </a>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Header Section */}
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 border-b border-slate-100 pb-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-[2px] w-8 bg-brand-primary" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary">Official Communication</span>
+                </div>
+                <h2 className="text-3xl md:text-5xl font-display font-medium text-slate-900 italic font-bold">Notice Board</h2>
+                <p className="text-slate-500 max-w-md">Access latest announcements, schedules, and important documents from the association.</p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:w-auto">
+                <div className="relative group flex-1 md:w-64">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-brand-primary transition-colors" size={18} />
+                  <input 
+                    type="text" 
+                    placeholder="Search by title..." 
+                    className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl shadow-sm outline-none focus:ring-4 focus:ring-brand-primary/5 focus:border-brand-primary transition-all text-sm"
+                    value={noticeSearch}
+                    onChange={(e) => setNoticeSearch(e.target.value)}
+                  />
+                </div>
+                
+                <div className="relative w-full sm:w-48">
+                  <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                  <select 
+                    value={noticeCategoryFilter}
+                    onChange={(e) => setNoticeCategoryFilter(e.target.value)}
+                    className="w-full pl-11 pr-10 py-3 bg-white border border-slate-200 rounded-2xl shadow-sm outline-none focus:ring-4 focus:ring-brand-primary/5 focus:border-brand-primary transition-all text-sm appearance-none cursor-pointer font-bold text-slate-700"
+                  >
+                    <option value="All">All Categories</option>
+                    <option value="General">General</option>
+                    <option value="Event">Events</option>
+                    <option value="Committee">Committee</option>
+                    <option value="Financial">Financial</option>
+                  </select>
+                  <ChevronRight size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 rotate-90 pointer-events-none" />
                 </div>
               </div>
             </div>
 
-            {/* Notices List */}
-            <div className="space-y-4">
+            {/* Notices Content */}
+            <div className="space-y-8">
               {filteredNotices.length > 0 ? (
                 filteredNotices.map((notice, idx) => (
                   <motion.div
                     key={notice.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: idx * 0.05 }}
-                    className="bg-white rounded-2xl border border-slate-100 p-4 md:p-6 shadow-sm hover:shadow-md transition-all group flex flex-col gap-4"
+                    initial={{ opacity: 0, y: 30 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: idx * 0.1 }}
+                    className="bg-white rounded-[2.5rem] border border-slate-100 p-6 md:p-10 shadow-sm hover:shadow-2xl hover:shadow-slate-200/50 transition-all group"
                   >
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div className="flex items-start gap-4 flex-1">
-                        <div className="bg-slate-50 p-3 rounded-xl text-slate-400 group-hover:text-brand-primary group-hover:bg-brand-primary/5 transition-all shrink-0">
-                          <FileText size={24} />
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-3">
-                            <span className="text-[10px] font-black uppercase tracking-tighter text-slate-300 bg-slate-50 px-2 py-0.5 rounded">
-                              {notice.date}
-                            </span>
-                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
-                              notice.category === 'Financial' ? 'text-red-500 bg-red-50' :
-                              notice.category === 'Event' ? 'text-green-500 bg-green-50' :
-                              notice.category === 'Committee' ? 'text-blue-500 bg-blue-50' :
-                              'text-slate-500 bg-slate-100'
-                            }`}>
-                              {notice.category}
-                            </span>
-                          </div>
-                          <h3 className="text-lg font-display font-bold text-slate-900 group-hover:text-brand-primary transition-colors leading-tight">
-                            {notice.title}
-                          </h3>
-                        </div>
+                    {/* Entry Header: Title (L) - Date (R) */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 border-b border-slate-50 pb-6">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-3 h-3 rounded-full ${
+                          notice.category === 'Financial' ? 'bg-red-500' :
+                          notice.category === 'Event' ? 'bg-green-500' :
+                          notice.category === 'Committee' ? 'bg-blue-500' :
+                          'bg-slate-400'
+                        } shrink-0`} />
+                        <h3 className="text-xl md:text-2xl font-display font-bold text-slate-900 group-hover:text-brand-primary transition-colors leading-tight">
+                          {notice.title}
+                        </h3>
                       </div>
-
-                      <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                        {notice.pdfUrl && (
-                          <button 
-                            onClick={() => window.open(notice.pdfUrl, '_blank')}
-                            className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-brand-primary transition-all active:scale-95 shadow-sm"
-                          >
-                            <ExternalLink size={14} />
-                            View PDF
-                          </button>
-                        )}
+                      <div className="flex items-center gap-3 bg-slate-50 px-5 py-2.5 rounded-full border border-slate-100 text-slate-500 font-mono text-sm font-bold shrink-0">
+                        <Clock size={16} className="text-slate-300" />
+                        {notice.date}
                       </div>
                     </div>
 
-                    <div className="grid md:grid-cols-12 gap-6 items-start">
-                      {notice.image && (
-                        <div className="md:col-span-4 rounded-xl overflow-hidden border border-slate-100 shadow-sm">
-                          <img src={notice.image} alt={notice.title} className="w-full h-auto object-cover max-h-64" />
+                    {/* Entry Body: Image (L) - Description (R) */}
+                    <div className="grid md:grid-cols-12 gap-10">
+                      {/* Image Area */}
+                      <div className="md:col-span-5 lg:col-span-4 relative group/img cursor-pointer" onClick={() => notice.image && setSelectedNoticeImage(notice.image)}>
+                        <div className="aspect-[4/3] rounded-3xl overflow-hidden bg-slate-100 border border-slate-100 shadow-inner group-hover/img:shadow-xl transition-all duration-500">
+                          {notice.image ? (
+                            <>
+                              <img 
+                                src={notice.image} 
+                                alt={notice.title}
+                                className="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-110"
+                              />
+                              <div className="absolute inset-0 bg-slate-900/0 group-hover/img:bg-slate-900/30 transition-all flex items-center justify-center">
+                                <Maximize2 className="text-white opacity-0 group-hover/img:opacity-100 scale-50 group-hover/img:scale-100 transition-all duration-300" size={32} />
+                              </div>
+                            </>
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-200">
+                              <ImageIcon size={64} strokeWidth={1} />
+                            </div>
+                          )}
                         </div>
-                      )}
-                      <div className={`${notice.image ? 'md:col-span-8' : 'md:col-span-12'} text-sm text-slate-600 leading-relaxed whitespace-pre-wrap`}>
-                        {notice.description}
+                        {notice.image && (
+                          <div className="absolute -bottom-3 -right-3 w-12 h-12 bg-white rounded-2xl shadow-lg flex items-center justify-center text-slate-400 group-hover/img:text-brand-primary transition-colors">
+                            <Maximize2 size={20} />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Description & Links Area */}
+                      <div className="md:col-span-7 lg:col-span-8 flex flex-col justify-between">
+                        <div className="space-y-6">
+                          <span className={`inline-block px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-[0.2em] ${
+                            notice.category === 'Financial' ? 'text-red-600 bg-red-50' :
+                            notice.category === 'Event' ? 'text-green-600 bg-green-50' :
+                            notice.category === 'Committee' ? 'text-blue-600 bg-blue-50' :
+                            'text-slate-500 bg-slate-100'
+                          }`}>
+                            {notice.category} Posting
+                          </span>
+                          <p className="text-slate-600 text-base md:text-lg leading-relaxed whitespace-pre-line">
+                            {notice.description}
+                          </p>
+                        </div>
+
+                        <div className="mt-10 flex flex-wrap items-center gap-4 pt-8 border-t border-slate-50">
+                          {notice.fbLink && (
+                            <button 
+                              onClick={() => window.open(notice.fbLink, '_blank')}
+                              className="flex items-center gap-3 bg-[#1877F2] text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-[#166fe5] hover:shadow-xl hover:shadow-blue-200 transition-all active:scale-95 translate-y-0 hover:-translate-y-1"
+                            >
+                              <Facebook size={18} />
+                              Facebook Post
+                            </button>
+                          )}
+
+                          {notice.image && (
+                            <button 
+                              onClick={() => handleDownloadImage(notice.image!, `notice-${notice.id}.jpg`)}
+                              className="flex items-center gap-3 bg-white border border-slate-200 text-slate-700 px-8 py-3.5 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-50 transition-all active:scale-95 translate-y-0 hover:-translate-y-1"
+                            >
+                              <Download size={18} />
+                              Download Image
+                            </button>
+                          )}
+                          
+                          {(notice.pdfUrl && notice.pdfUrl !== '#') && (
+                            <button 
+                              onClick={() => window.open(notice.pdfUrl, '_blank')}
+                              className="flex items-center gap-3 bg-slate-900 text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-brand-primary hover:shadow-xl hover:shadow-brand-primary/20 transition-all active:scale-95 translate-y-0 hover:-translate-y-1"
+                            >
+                              <FileText size={18} />
+                              Read Document
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </motion.div>
                 ))
               ) : (
-                <div className="py-20 text-center bg-white rounded-[2rem] border border-dashed border-slate-200">
-                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Search size={32} className="text-slate-200" />
+                <div className="py-32 text-center bg-white rounded-[3rem] border border-dashed border-slate-200 shadow-inner">
+                  <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                    <Search size={48} />
                   </div>
-                  <h3 className="text-lg font-display font-bold text-slate-900">No notices found</h3>
-                  <p className="text-slate-400 text-sm mt-1">Try adjusting your search or category filter</p>
+                  <h3 className="text-2xl font-display font-bold text-slate-900">No matching notices</h3>
+                  <p className="text-slate-400 mt-2 max-w-xs mx-auto">We couldn't find any notices matching your current search or filter criteria.</p>
                   <button 
                     onClick={() => { setNoticeSearch(''); setNoticeCategoryFilter('All'); }}
-                    className="mt-6 text-brand-primary font-bold text-xs uppercase tracking-widest hover:underline"
+                    className="mt-8 px-10 py-3 bg-brand-primary text-white rounded-full font-black uppercase tracking-widest text-[10px] hover:shadow-xl transition-all"
                   >
-                    Clear all filters
+                    View All Notices
                   </button>
                 </div>
               )}
             </div>
 
-            <div className="mt-16 text-center">
+            <div className="mt-24 text-center">
               <button 
                 onClick={() => { setShowNoticesView(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="inline-flex items-center gap-3 px-8 py-3 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-slate-900 hover:border-slate-400 transition-all text-xs font-bold tracking-widest uppercase"
+                className="group relative inline-flex items-center gap-4 px-12 py-4 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-slate-900 hover:border-slate-400 transition-all text-xs font-black tracking-[0.2em] uppercase overflow-hidden"
               >
-                <ArrowRight className="rotate-180" size={14} /> Back to dashboard
+                <div className="absolute inset-0 bg-slate-50 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-500" />
+                <ArrowLeft className="relative z-10 transition-transform group-hover:-translate-x-1" size={16} />
+                <span className="relative z-10">Return to Portal</span>
               </button>
             </div>
           </div>

@@ -144,6 +144,22 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["type", "amount", "description", "date", "category", "recordedBy"]
+    },
+    "notice": {
+      "title": "Notice",
+      "description": "Official association announcements",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string", "enum": ["General", "Event", "Committee", "Financial"] },
+        "fbLink": { "type": "string" },
+        "image": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "date", "description", "category"]
     }
   },
   "firestore": {
@@ -170,6 +186,10 @@
     "finances/{financeId}": {
       "schema": "financeEntry",
       "description": "Financial ledger transactions"
+    },
+    "notices/{noticeId}": {
+      "schema": "notice",
+      "description": "Collection of official notices"
     }
   }
 }
