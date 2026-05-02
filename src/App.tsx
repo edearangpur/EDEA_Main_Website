@@ -95,8 +95,9 @@ interface Notice {
   title: string;
   date: string;
   description: string;
-  category: 'General' | 'Event' | 'Committee' | 'Financial';
-  pdfUrl: string;
+  category: string;
+  image?: string;
+  pdfUrl?: string;
 }
 
 interface Member {
@@ -115,7 +116,7 @@ interface SpecializedAccount {
   name: string;
   email: string;
   password?: string;
-  role: 'finance' | 'admin';
+  role: 'finance' | 'admin' | 'secretary';
   createdAt: any;
 }
 
@@ -139,48 +140,7 @@ const HERO_IMAGES = [
 
 const PROGRAMS: Program[] = [];
 
-const NOTICES: Notice[] = [
-  {
-    id: '1',
-    title: 'Annual General Meeting (AGM) 2024 Schedule',
-    date: '2024-05-10',
-    description: 'Preliminary agenda and venue details for the upcoming AGM.',
-    category: 'General',
-    pdfUrl: '#'
-  },
-  {
-    id: '2',
-    title: 'Executive Committee Election Nomination Call',
-    date: '2024-04-15',
-    description: 'Guidelines for nominating candidates for the 2024-2026 committee.',
-    category: 'Committee',
-    pdfUrl: '#'
-  },
-  {
-    id: '3',
-    title: 'Membership Renewal Period Extended',
-    date: '2024-03-01',
-    description: 'Renewal deadline has been moved to April 30th.',
-    category: 'General',
-    pdfUrl: '#'
-  },
-  {
-    id: '4',
-    title: 'Q1 Financial Statement Audit Report',
-    date: '2024-04-05',
-    description: 'Detailed financial report for the first quarter of 2024.',
-    category: 'Financial',
-    pdfUrl: '#'
-  },
-  {
-    id: '5',
-    title: 'Upcoming Medical Tech Seminar in Rangpur',
-    date: '2024-05-20',
-    description: 'Invitation for all members to attend the technical exhibition.',
-    category: 'Event',
-    pdfUrl: '#'
-  }
-];
+const NOTICES: Notice[] = [];
 
 const MEMBERS: Member[] = [
   {
@@ -366,6 +326,7 @@ export default function App() {
           setShowStaffLogin(false);
           if (data.role === 'finance') setAdminTab('finance');
           else if (data.role === 'admin') setAdminTab('accounts');
+          else if (data.role === 'secretary') setAdminTab('profile');
           setShowAdminDashboard(true);
         } else {
           setStaffLoginError('Invalid password. Please try again.');
@@ -401,9 +362,9 @@ export default function App() {
   // Firebase Auth & Config States
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [specializedRole, setSpecializedRole] = useState<'finance' | 'admin' | null>(() => {
+  const [specializedRole, setSpecializedRole] = useState<'finance' | 'admin' | 'secretary' | null>(() => {
     const saved = sessionStorage.getItem('specializedRole');
-    return (saved === 'finance' || saved === 'admin') ? saved : null;
+    return (saved === 'finance' || saved === 'admin' || saved === 'secretary') ? saved : null;
   });
   const [associationConfig, setAssociationConfig] = useState<AssociationConfig>({
     mission: 'To unite electromedical engineers in Rangpur, providing them with technical resources, networking opportunities, and a unified voice to advance the standard of medical equipment maintenance and healthcare delivery in our region.',
@@ -493,8 +454,19 @@ export default function App() {
 
   // Local Programs State
   const [programs, setPrograms] = useState<Program[]>([]);
-  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance'>('general');
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'notices' | 'portal' | 'accounts' | 'finance' | 'profile'>('general');
   const [isAddingProgram, setIsAddingProgram] = useState(false);
+  const [isAddingNotice, setIsAddingNotice] = useState(false);
+  const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
+  const [noticeForm, setNoticeForm] = useState({
+    title: '',
+    date: new Date().toISOString().split('T')[0],
+    category: 'General',
+    description: '',
+    image: '',
+    pdfUrl: ''
+  });
   
   // Specialized Accounts State
   const [specializedAccounts, setSpecializedAccounts] = useState<SpecializedAccount[]>([]);
@@ -572,6 +544,8 @@ export default function App() {
               setSpecializedRole(data.role);
               if (data.role === 'finance') {
                 setAdminTab('finance');
+              } else if (data.role === 'secretary') {
+                setAdminTab('profile');
               }
             }
           } catch (e) {}
@@ -650,6 +624,17 @@ export default function App() {
       console.error("Programs fetch issue:", error);
     });
 
+    // Notices Listener
+    const unsubscribeNotices = onSnapshot(query(collection(db, 'notices'), orderBy('date', 'desc')), (snapshot) => {
+      const noticesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Notice[];
+      setNotices(noticesData);
+    }, (error) => {
+      console.error("Notices fetch issue:", error);
+    });
+
     // Specialized Accounts Listener (Super Admin only)
     let unsubscribeAccounts: (() => void) | null = null;
     if (isAdmin) {
@@ -693,6 +678,7 @@ export default function App() {
       unsubscribeConfig();
       unsubscribePortal();
       unsubscribePrograms();
+      unsubscribeNotices();
       unsubscribeAccounts?.();
       unsubscribeFinances?.();
     };
@@ -711,11 +697,11 @@ export default function App() {
     return matchesSearch && matchesSession;
   });
 
-  const filteredNotices = NOTICES.filter(n => {
+  const filteredNotices = notices.filter(n => {
     const matchesSearch = n.title.toLowerCase().includes(noticeSearch.toLowerCase());
     const matchesCategory = noticeCategoryFilter === 'All' || n.category === noticeCategoryFilter;
     return matchesSearch && matchesCategory;
-  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }); // Date sorting is handled by Firestore query orderby('date', 'desc')
 
   const handleSaveConfig = async () => {
     if (!user || !isAdmin) return;
@@ -825,6 +811,65 @@ export default function App() {
       budget: p.budget || { income: [], expense: [] }
     });
     setIsAddingProgram(true);
+  };
+
+  const handleSaveNotice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || (!isAdmin && specializedRole !== 'secretary')) return;
+
+    const path = 'notices';
+    try {
+      const nData = {
+        ...noticeForm,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid
+      };
+
+      if (editingNotice) {
+        await setDoc(doc(db, 'notices', editingNotice.id), nData);
+      } else {
+        await addDoc(collection(db, 'notices'), {
+          ...nData,
+          createdAt: serverTimestamp()
+        });
+      }
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: editingNotice ? 'Notice updated successfully!' : 'New notice posted successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+      setIsAddingNotice(false);
+      setEditingNotice(null);
+      setNoticeForm({ 
+        title: '', 
+        date: new Date().toISOString().split('T')[0], 
+        category: 'General', 
+        description: '', 
+        image: '', 
+        pdfUrl: '' 
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
+  const handleDeleteNotice = async (id: string) => {
+    if (!user || (!isAdmin && specializedRole !== 'secretary') || !confirm('Are you sure you want to delete this notice?')) return;
+    try {
+      await deleteDoc(doc(db, 'notices', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'notices');
+    }
+  };
+
+  const openEditNotice = (n: Notice) => {
+    setEditingNotice(n);
+    setNoticeForm({
+      title: n.title,
+      category: n.category,
+      date: n.date,
+      description: n.description,
+      image: n.image || '',
+      pdfUrl: n.pdfUrl || ''
+    });
+    setIsAddingNotice(true);
   };
 
   return (
@@ -964,6 +1009,25 @@ export default function App() {
                 >
                   <PieChart size={14} />
                   Finance Dashboard
+                </button>
+              )}
+
+              {specializedRole === 'secretary' && (
+                <button 
+                  onClick={() => {
+                    setShowAdminDashboard(true);
+                    setShowNoticesView(false);
+                    setShowAllProgramsView(false);
+                    setShowFullCommittee(false);
+                    setShowAllMembers(false);
+                    setSelectedProgram(null);
+                    setAdminTab('profile');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} 
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all font-bold text-xs uppercase tracking-widest ${showAdminDashboard && specializedRole === 'secretary' ? 'bg-brand-primary text-white' : 'text-brand-primary hover:bg-brand-primary/5'}`}
+                >
+                  <ShieldCheck size={14} />
+                  Secretary Portal
                 </button>
               )}
 
@@ -1129,6 +1193,26 @@ export default function App() {
                   >
                     <PieChart size={14} />
                     Finance Dashboard
+                  </button>
+                )}
+
+                {specializedRole === 'secretary' && (
+                  <button 
+                    onClick={() => { 
+                      setShowAdminDashboard(true);
+                      setShowNoticesView(false);
+                      setShowAllProgramsView(false); 
+                      setShowFullCommittee(false); 
+                      setShowAllMembers(false); 
+                      setSelectedProgram(null); 
+                      setAdminTab('profile');
+                      setIsMenuOpen(false); 
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }} 
+                    className="flex items-center gap-2 w-full text-left text-brand-primary font-bold uppercase text-xs tracking-widest pt-4 border-t border-slate-100"
+                  >
+                    <ShieldCheck size={14} />
+                    Secretary Portal
                   </button>
                 )}
                 
@@ -2322,11 +2406,15 @@ export default function App() {
                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary">Control Center</span>
                 </div>
                 <h1 className="text-4xl font-display font-medium text-slate-900 italic font-bold">
-                  {specializedRole === 'finance' ? 'Finance Dashboard' : 'Admin Dashboard'}
+                  {specializedRole === 'finance' ? 'Finance Dashboard' : 
+                   specializedRole === 'secretary' ? 'Secretary Dashboard' : 
+                   'Admin Dashboard'}
                 </h1>
                 <p className="text-slate-500 text-sm mt-1">
                   {specializedRole === 'finance' 
                     ? 'Track association income and expenditures.' 
+                    : specializedRole === 'secretary'
+                    ? 'Manage your specialized secretary profile.'
                     : 'Manage association content and specialized accounts.'}
                 </p>
               </div>
@@ -2390,9 +2478,31 @@ export default function App() {
                   </button>
                 )}
 
+                {specializedRole === 'secretary' && (
+                  <>
+                    <button 
+                      onClick={() => setAdminTab('profile')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'profile' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <ShieldCheck size={18} />
+                      <span className="font-bold text-sm">Secretary Profile</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('notices')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'notices' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <FileText size={18} />
+                      <span className="font-bold text-sm">Notice Management</span>
+                    </button>
+                  </>
+                )}
+
                 {isAdmin && (
                   <>
-                    <button className="w-full flex items-center gap-4 p-4 bg-white text-slate-300 rounded-2xl cursor-not-allowed border border-slate-50 opacity-50">
+                    <button 
+                      onClick={() => setAdminTab('notices')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'notices' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
                       <FileText size={18} />
                       <span className="font-bold text-sm">Notice Management</span>
                     </button>
@@ -2585,6 +2695,34 @@ export default function App() {
                           <Save size={16} />
                           Update Website
                         </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : adminTab === 'profile' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-12 text-center space-y-8">
+                      <div className="w-32 h-32 bg-brand-primary/10 rounded-[3rem] flex items-center justify-center mx-auto text-brand-primary">
+                        <ShieldCheck size={64} />
+                      </div>
+                      <div>
+                        <h3 className="font-display font-bold text-3xl text-slate-900">Office Secretary Portal</h3>
+                        <p className="text-slate-500 mt-2">Welcome to your specialized association profile.</p>
+                      </div>
+                      
+                      <div className="max-w-md mx-auto p-8 rounded-[2.5rem] bg-slate-50 border border-slate-100 space-y-6">
+                        <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Account Role</span>
+                          <span className="px-3 py-1 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-widest">Office Secretary</span>
+                        </div>
+                        <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Portal Access</span>
+                          <span className="text-sm font-bold text-slate-900">Active</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-8 text-center bg-slate-50/50 p-6 rounded-3xl border border-dashed border-slate-200">
+                        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Administrative Notice</p>
+                        <p className="text-[10px] text-slate-300 font-medium italic mt-2">Specialized administrative functions for the Office Secretary role are being prepared and will be added in upcoming portal updates. Your account is verified and ready.</p>
                       </div>
                     </div>
                   </div>
@@ -2788,6 +2926,7 @@ export default function App() {
                               >
                                 <option value="finance">Finance / Accountant</option>
                                 <option value="admin">System Admin</option>
+                                <option value="secretary">Office Secretary</option>
                               </select>
                             </div>
                             <div className="space-y-4">
@@ -2843,7 +2982,11 @@ export default function App() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-4">
-                                <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${account.role === 'admin' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
+                                <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                                  account.role === 'admin' ? 'bg-purple-50 text-purple-600' : 
+                                  account.role === 'secretary' ? 'bg-brand-primary/10 text-brand-primary' :
+                                  'bg-blue-50 text-blue-600'
+                                }`}>
                                   {account.role}
                                 </span>
                                 <button 
@@ -3037,6 +3180,226 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+                  </div>
+                ) : adminTab === 'notices' ? (
+                  <div className="space-y-6">
+                    {isAddingNotice ? (
+                      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                        <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                          <h3 className="font-display font-bold text-xl text-slate-900">
+                            {editingNotice ? 'Edit Notice' : 'Post New Notice'}
+                          </h3>
+                          <button onClick={() => { setIsAddingNotice(false); setEditingNotice(null); }} className="text-slate-400 hover:text-slate-900">
+                            <X size={24} />
+                          </button>
+                        </div>
+                        
+                        <form onSubmit={handleSaveNotice} className="p-8 space-y-6">
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Title</label>
+                              <input 
+                                required
+                                value={noticeForm.title}
+                                onChange={(e) => setNoticeForm({...noticeForm, title: e.target.value})}
+                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                                placeholder="e.g. Annual General Meeting 2024"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
+                              <select 
+                                required
+                                value={noticeForm.category}
+                                onChange={(e) => setNoticeForm({...noticeForm, category: e.target.value})}
+                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                              >
+                                <option value="General">General</option>
+                                <option value="Event">Event</option>
+                                <option value="Committee">Committee</option>
+                                <option value="Financial">Financial</option>
+                                <option value="Urgent">Urgent</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
+                              <input 
+                                required
+                                type="date"
+                                value={noticeForm.date}
+                                onChange={(e) => setNoticeForm({...noticeForm, date: e.target.value})}
+                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">PDF Document URL (Optional)</label>
+                              <input 
+                                value={noticeForm.pdfUrl}
+                                onChange={(e) => setNoticeForm({...noticeForm, pdfUrl: e.target.value})}
+                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                                placeholder="Link to official document..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Attachment / Picture</label>
+                            <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                              {noticeForm.image ? (
+                                <div className="w-32 h-20 rounded-xl overflow-hidden border-2 border-white shadow-sm shrink-0">
+                                  <img src={noticeForm.image} alt="Notice Preview" className="w-full h-full object-cover" />
+                                </div>
+                              ) : (
+                                <div className="w-32 h-20 rounded-xl bg-slate-100 border-2 border-white flex items-center justify-center shrink-0">
+                                  <ImageIcon className="text-slate-300" size={24} />
+                                </div>
+                              )}
+                              <div className="flex-grow space-y-2">
+                                <input 
+                                  type="file"
+                                  id="notice-picture-upload"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      try {
+                                        setIsUploading('notice');
+                                        const url = await uploadImage(file);
+                                        setNoticeForm({...noticeForm, image: url});
+                                      } catch (err) {
+                                        alert(err instanceof Error ? err.message : 'Upload failed');
+                                      } finally {
+                                        setIsUploading(null);
+                                      }
+                                    }
+                                  }}
+                                />
+                                <label 
+                                  htmlFor="notice-picture-upload"
+                                  className="flex items-center justify-center gap-3 px-6 py-3 bg-white border border-slate-100 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-900 hover:text-white transition-all cursor-pointer shadow-sm group"
+                                >
+                                  {isUploading === 'notice' ? (
+                                    <Loader2 size={16} className="animate-spin text-brand-primary" />
+                                  ) : (
+                                    <Upload size={16} className="group-hover:scale-110 transition-transform" />
+                                  )}
+                                  {isUploading === 'notice' ? 'Uploading...' : 'Upload Notice Image'}
+                                </label>
+                                <p className="text-[10px] text-slate-400">Upload a picture of the notice or related visual. Saved in Cloudinary.</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notice Content / Description</label>
+                            <textarea 
+                              required
+                              value={noticeForm.description}
+                              onChange={(e) => setNoticeForm({...noticeForm, description: e.target.value})}
+                              className="w-full h-32 p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                              placeholder="Full notice message..."
+                            />
+                          </div>
+
+                          <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
+                            <button 
+                              type="button"
+                              onClick={() => { setIsAddingNotice(false); setEditingNotice(null); }}
+                              className="px-8 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all"
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              type="submit"
+                              className="flex items-center gap-3 bg-brand-primary text-white px-12 py-3 rounded-xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            >
+                              <Save size={16} />
+                              {editingNotice ? 'Update Notice' : 'Post Notice'}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-display font-bold text-2xl text-slate-900">Notice Board Records</h3>
+                          <button 
+                            onClick={() => setIsAddingNotice(true)}
+                            className="bg-brand-primary text-white px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest flex items-center gap-2 hover:shadow-lg transition-all"
+                          >
+                            <Plus size={16} />
+                            Add New Notice
+                          </button>
+                        </div>
+
+                        {notices.length === 0 ? (
+                          <div className="bg-white border-2 border-dashed border-slate-100 rounded-[2rem] p-20 text-center">
+                            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                              <FileText size={40} />
+                            </div>
+                            <h4 className="text-xl font-bold text-slate-900 mb-2">No notices found</h4>
+                            <p className="text-slate-500 mb-8 max-w-sm mx-auto">Post your first notice to keep members informed.</p>
+                            <button 
+                              onClick={() => setIsAddingNotice(true)}
+                              className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-bold uppercase tracking-widest"
+                            >
+                              Post First Notice
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid gap-4">
+                            {notices.map(n => (
+                              <div key={n.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between group hover:border-brand-primary/30 transition-all">
+                                <div className="flex items-center gap-6">
+                                  <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-50 shrink-0 flex items-center justify-center text-slate-400 group-hover:text-brand-primary group-hover:bg-brand-primary/5 transition-all">
+                                    {n.image ? (
+                                      <img src={n.image} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <FileText size={24} />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                                        n.category === 'Financial' ? 'text-red-500 bg-red-50' :
+                                        n.category === 'Event' ? 'text-green-500 bg-green-50' :
+                                        n.category === 'Committee' ? 'text-blue-500 bg-blue-50' :
+                                        'text-slate-500 bg-slate-100'
+                                      }`}>
+                                        {n.category}
+                                      </span>
+                                      <span className="text-[10px] text-slate-300 font-medium">{n.date}</span>
+                                    </div>
+                                    <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{n.title}</h4>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <button 
+                                    onClick={() => openEditNotice(n)}
+                                    className="p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-xl transition-all"
+                                    title="Edit"
+                                  >
+                                    <Settings size={18} />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteNotice(n.id)}
+                                    className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={18} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : adminTab === 'programs' ? (
                   <div className="space-y-6">
@@ -3652,41 +4015,55 @@ export default function App() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: idx * 0.05 }}
-                    className="bg-white rounded-2xl border border-slate-100 p-4 md:p-6 shadow-sm hover:shadow-md transition-all group flex flex-col md:flex-row md:items-center justify-between gap-4"
+                    className="bg-white rounded-2xl border border-slate-100 p-4 md:p-6 shadow-sm hover:shadow-md transition-all group flex flex-col gap-4"
                   >
-                    <div className="flex items-start gap-4 flex-1">
-                      <div className="bg-slate-50 p-3 rounded-xl text-slate-400 group-hover:text-brand-primary group-hover:bg-brand-primary/5 transition-all">
-                        <FileText size={24} />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-3">
-                          <span className="text-[10px] font-black uppercase tracking-tighter text-slate-300 bg-slate-50 px-2 py-0.5 rounded">
-                            {notice.date}
-                          </span>
-                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
-                            notice.category === 'Financial' ? 'text-red-500 bg-red-50' :
-                            notice.category === 'Event' ? 'text-green-500 bg-green-50' :
-                            notice.category === 'Committee' ? 'text-blue-500 bg-blue-50' :
-                            'text-slate-500 bg-slate-100'
-                          }`}>
-                            {notice.category}
-                          </span>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-start gap-4 flex-1">
+                        <div className="bg-slate-50 p-3 rounded-xl text-slate-400 group-hover:text-brand-primary group-hover:bg-brand-primary/5 transition-all shrink-0">
+                          <FileText size={24} />
                         </div>
-                        <h3 className="text-lg font-display font-bold text-slate-900 group-hover:text-brand-primary transition-colors leading-tight">
-                          {notice.title}
-                        </h3>
-                        <p className="text-slate-500 text-xs line-clamp-1">{notice.description}</p>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-black uppercase tracking-tighter text-slate-300 bg-slate-50 px-2 py-0.5 rounded">
+                              {notice.date}
+                            </span>
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
+                              notice.category === 'Financial' ? 'text-red-500 bg-red-50' :
+                              notice.category === 'Event' ? 'text-green-500 bg-green-50' :
+                              notice.category === 'Committee' ? 'text-blue-500 bg-blue-50' :
+                              'text-slate-500 bg-slate-100'
+                            }`}>
+                              {notice.category}
+                            </span>
+                          </div>
+                          <h3 className="text-lg font-display font-bold text-slate-900 group-hover:text-brand-primary transition-colors leading-tight">
+                            {notice.title}
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
+                        {notice.pdfUrl && (
+                          <button 
+                            onClick={() => window.open(notice.pdfUrl, '_blank')}
+                            className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-brand-primary transition-all active:scale-95 shadow-sm"
+                          >
+                            <ExternalLink size={14} />
+                            View PDF
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                      <button 
-                        onClick={() => window.open(notice.pdfUrl, '_blank')}
-                        className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-brand-primary transition-all active:scale-95 shadow-sm"
-                      >
-                        <ExternalLink size={14} />
-                        View PDF
-                      </button>
+                    <div className="grid md:grid-cols-12 gap-6 items-start">
+                      {notice.image && (
+                        <div className="md:col-span-4 rounded-xl overflow-hidden border border-slate-100 shadow-sm">
+                          <img src={notice.image} alt={notice.title} className="w-full h-auto object-cover max-h-64" />
+                        </div>
+                      )}
+                      <div className={`${notice.image ? 'md:col-span-8' : 'md:col-span-12'} text-sm text-slate-600 leading-relaxed whitespace-pre-wrap`}>
+                        {notice.description}
+                      </div>
                     </div>
                   </motion.div>
                 ))
