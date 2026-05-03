@@ -38,6 +38,7 @@ import {
   Tag,
   PieChart,
   ArrowLeft,
+  User as UserIcon,
   Upload,
   Loader2,
   Image as ImageIcon
@@ -54,6 +55,7 @@ import {
   doc, 
   onSnapshot, 
   setDoc, 
+  updateDoc,
   addDoc,
   deleteDoc,
   collection,
@@ -64,7 +66,7 @@ import {
   where,
   getDocs
 } from 'firebase/firestore';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 
 // Types
 interface Program {
@@ -365,6 +367,18 @@ export default function App() {
   const [noticeCategoryFilter, setNoticeCategoryFilter] = useState('All');
   const [selectedNoticeImage, setSelectedNoticeImage] = useState<string | null>(null);
 
+  const [showMemberDashboard, setShowMemberDashboard] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    session: '',
+    shift: 'First',
+    bloodGroup: '',
+    companyName: '',
+    photoURL: ''
+  });
+
   // Firebase Auth & Config States
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -484,8 +498,105 @@ export default function App() {
     role: 'finance' as 'finance' | 'admin'
   });
 
-  // Specialized Login State
   const [showStaffLogin, setShowStaffLogin] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [registerStep, setRegisterStep] = useState<'form' | 'otp'>('form');
+  const [registerForm, setRegisterForm] = useState({ name: '', email: '', password: '' });
+  const [otpCode, setOtpCode] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+
+  const handleSendOTP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsRegistering(true);
+    setRegisterError(null);
+    try {
+      const response = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(registerForm),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to send OTP');
+      setRegisterStep('otp');
+    } catch (err: any) {
+      setRegisterError(err.message);
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleVerifyOTP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsRegistering(true);
+    setRegisterError(null);
+    try {
+      const response = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: registerForm.email, otp: otpCode }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Verification failed');
+      
+      // Step 2: Create account on client side as backend admin API is disabled
+      const userCredential = await createUserWithEmailAndPassword(auth, registerForm.email, registerForm.password);
+      const newUser = userCredential.user;
+
+      // Step 3: Initialize profile in Firestore
+      await setDoc(doc(db, 'users', newUser.uid), {
+        name: registerForm.name,
+        email: registerForm.email,
+        role: 'member_candidate',
+        isVerified: true,
+        createdAt: new Date().toISOString()
+      });
+
+      setShowStaffLogin(false);
+      setAuthMode('login');
+      setRegisterStep('form');
+      setRegisterForm({ name: '', email: '', password: '' });
+      setOtpCode('');
+    } catch (err: any) {
+      console.error(err);
+      setRegisterError(err.message || 'Verification or registration failed');
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleMemberLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingInStaff(true);
+    setStaffLoginError(null);
+    try {
+      // First try specialized accounts (legacy/staff)
+      const docRef = doc(db, 'specializedAccounts', staffLoginForm.email.toLowerCase());
+      const snapshot = await getDocFromServer(docRef);
+      
+      if (snapshot.exists()) {
+        const data = snapshot.data() as SpecializedAccount;
+        if (data.password === staffLoginForm.password) {
+          setSpecializedRole(data.role);
+          sessionStorage.setItem('specializedRole', data.role);
+          sessionStorage.setItem('specializedEmail', data.email);
+          setShowStaffLogin(false);
+          setShowAdminDashboard(true);
+          return;
+        }
+      }
+      
+      // If not specialized, try standard Firebase Auth for members
+      await signInWithEmailAndPassword(auth, staffLoginForm.email, staffLoginForm.password);
+      setShowStaffLogin(false);
+    } catch (err: any) {
+      console.error(err);
+      setStaffLoginError('Invalid credentials or account does not exist.');
+    } finally {
+      setIsLoggingInStaff(false);
+    }
+  };
+
   const [staffLoginForm, setStaffLoginForm] = useState({ email: '', password: '' });
   const [staffLoginError, setStaffLoginError] = useState<string | null>(null);
   const [isLoggingInStaff, setIsLoggingInStaff] = useState(false);
@@ -521,9 +632,8 @@ export default function App() {
     }
   });
 
-  // Auto-slide logic for Programs
+  // Auth Listener
   useEffect(() => {
-    // Auth Listener
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setIsAdmin(false);
@@ -564,6 +674,11 @@ export default function App() {
       }
     });
 
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Firestore Data Listeners
+  useEffect(() => {
     // Test Connection to verify Firestore set up as per instructions
     const testConnection = async () => {
       try {
@@ -578,9 +693,9 @@ export default function App() {
     testConnection();
 
     // Config Listener
-    const unsubscribeConfig = onSnapshot(doc(db, 'config', 'association'), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
+    const unsubscribeConfig = onSnapshot(doc(db, 'config', 'association'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
         setAssociationConfig({
           mission: data.mission || associationConfig.mission,
           vision: data.vision || associationConfig.vision,
@@ -595,13 +710,13 @@ export default function App() {
         setEditHeroImages(data.heroImages || []);
       }
     }, (error) => {
-      console.warn("Config fetch issue:", error);
+      handleFirestoreError(error, OperationType.GET, 'config/association');
     });
 
     // Portal Config Listener
-    const unsubscribePortal = onSnapshot(doc(db, 'config', 'portal'), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
+    const unsubscribePortal = onSnapshot(doc(db, 'config', 'portal'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
         const updatedPortal = {
           title: data.title || portalConfig.title,
           secretaryName: data.secretaryName || portalConfig.secretaryName,
@@ -616,7 +731,7 @@ export default function App() {
         setEditPortal(updatedPortal);
       }
     }, (error) => {
-      console.warn("Portal config fetch issue:", error);
+      handleFirestoreError(error, OperationType.GET, 'config/portal');
     });
 
     // Programs Listener
@@ -627,7 +742,7 @@ export default function App() {
       })) as Program[];
       setPrograms(programsData);
     }, (error) => {
-      console.error("Programs fetch issue:", error);
+      handleFirestoreError(error, OperationType.GET, 'programs');
     });
 
     // Specialized Accounts Listener (Super Admin only)
@@ -671,8 +786,28 @@ export default function App() {
       })) as Notice[];
       setNotices(data);
     }, (error) => {
-      console.error("Notices fetch issue:", error);
+      handleFirestoreError(error, OperationType.GET, 'notices');
     });
+
+    let unsubscribeProfile: (() => void) | null = null;
+    if (user) {
+      unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
+        if (snapshot.exists()) {
+          const profile = snapshot.data();
+          setUserProfile(profile);
+          setProfileForm({
+            name: profile.name || '',
+            session: profile.session || '',
+            shift: profile.shift || 'First',
+            bloodGroup: profile.bloodGroup || '',
+            companyName: profile.companyName || '',
+            photoURL: profile.photoURL || ''
+          });
+        }
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      });
+    }
 
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
@@ -680,15 +815,15 @@ export default function App() {
 
     return () => {
       clearInterval(programTimer);
-      unsubscribeAuth();
       unsubscribeConfig();
       unsubscribePortal();
       unsubscribePrograms();
       unsubscribeNotices();
       unsubscribeAccounts?.();
       unsubscribeFinances?.();
+      unsubscribeProfile?.();
     };
-  }, [programs.length, isAdmin, specializedRole]);
+  }, [programs.length, isAdmin, specializedRole, user]);
 
   const featuredProgram = programs.find(p => p.featured) || programs[0];
   
@@ -783,6 +918,22 @@ export default function App() {
     } catch (error) {
       console.error('Download failed:', error);
       window.open(url, '_blank');
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        ...profileForm,
+        updatedAt: serverTimestamp()
+      });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Profile updated successfully!' });
+      setIsEditingProfile(false);
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'users');
     }
   };
 
@@ -1058,6 +1209,23 @@ export default function App() {
               <div className="flex items-center gap-4">
                 {user || specializedRole ? (
                   <div className="flex items-center gap-3">
+                    {user && !isAdmin && (
+                      <button 
+                        onClick={() => {
+                          setShowMemberDashboard(true);
+                          setShowAdminDashboard(false);
+                          setShowNoticesView(false);
+                          setShowAllProgramsView(false);
+                          setShowFullCommittee(false);
+                          setShowAllMembers(false);
+                          setSelectedProgram(null);
+                        }}
+                        className="hidden md:flex items-center gap-2 bg-brand-primary/5 text-brand-primary px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-primary hover:text-white transition-all underline-offset-4"
+                      >
+                        <UserIcon size={14} />
+                        My Profile
+                      </button>
+                    )}
                     <div className="hidden sm:flex flex-col items-end">
                       <span className="text-[10px] font-bold text-slate-900 leading-none">
                         {user?.displayName || sessionStorage.getItem('specializedEmail')?.split('@')[0] || 'Staff Member'}
@@ -1067,6 +1235,9 @@ export default function App() {
                       )}
                       {specializedRole && (
                         <span className="text-[8px] font-bold text-brand-secondary uppercase tracking-widest mt-0.5">{specializedRole} Officer</span>
+                      )}
+                      {user && !isAdmin && (
+                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{userProfile?.role === 'member' ? 'Member' : 'Candidate'}</span>
                       )}
                     </div>
                     <button 
@@ -2398,6 +2569,179 @@ export default function App() {
           )}
         </AnimatePresence>
 
+
+        {showMemberDashboard && user && (
+          <div className="max-w-4xl mx-auto px-4 sm:px-8 py-8 md:py-12">
+            <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+              {/* Profile Header */}
+              <div className="bg-slate-900 p-8 md:p-12 text-white relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-8 opacity-10">
+                  <UserIcon size={120} />
+                </div>
+                <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
+                  <div className="relative group">
+                    <div className="w-32 h-32 rounded-3xl overflow-hidden border-4 border-white/20 shadow-2xl bg-white/10 flex items-center justify-center backdrop-blur-sm">
+                      {userProfile?.photoURL ? (
+                        <img src={userProfile.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                      ) : (
+                        <UserIcon size={48} className="text-white/30" />
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-center md:text-left">
+                    <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
+                      <span className="bg-brand-primary px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                        {userProfile?.role === 'member' ? 'Verified Member' : 'Candidate Account'}
+                      </span>
+                    </div>
+                    <h2 className="text-3xl md:text-4xl font-display font-bold italic">{userProfile?.name || 'Incomplete Profile'}</h2>
+                    <p className="text-white/60 text-sm mt-1">{user.email}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Profile Form */}
+              <div className="p-8 md:p-12">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="font-display font-bold text-2xl text-slate-900">Personal Information</h3>
+                  <button 
+                    onClick={() => setIsEditingProfile(!isEditingProfile)}
+                    className="flex items-center gap-2 text-brand-primary font-bold text-xs uppercase tracking-widest hover:underline"
+                  >
+                    {isEditingProfile ? 'Cancel Editing' : 'Edit Profile'}
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveProfile} className="space-y-8">
+                  <div className="grid md:grid-cols-2 gap-8">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Full Name</label>
+                      <input 
+                        disabled={!isEditingProfile}
+                        type="text"
+                        value={profileForm.name}
+                        onChange={(e) => setProfileForm({...profileForm, name: e.target.value})}
+                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                        placeholder="Your full name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Session (e.g., 2018-19)</label>
+                      <input 
+                        disabled={!isEditingProfile}
+                        type="text"
+                        value={profileForm.session}
+                        onChange={(e) => setProfileForm({...profileForm, session: e.target.value})}
+                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                        placeholder="Session year"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-3 gap-8">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Shift</label>
+                      <select 
+                        disabled={!isEditingProfile}
+                        value={profileForm.shift}
+                        onChange={(e) => setProfileForm({...profileForm, shift: e.target.value})}
+                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                      >
+                        <option value="First">First Shift</option>
+                        <option value="Second">Second Shift</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Blood Group</label>
+                      <input 
+                        disabled={!isEditingProfile}
+                        type="text"
+                        value={profileForm.bloodGroup}
+                        onChange={(e) => setProfileForm({...profileForm, bloodGroup: e.target.value})}
+                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                        placeholder="e.g., O+ (Positive)"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Company / Current Workplace</label>
+                      <input 
+                        disabled={!isEditingProfile}
+                        type="text"
+                        value={profileForm.companyName}
+                        onChange={(e) => setProfileForm({...profileForm, companyName: e.target.value})}
+                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                        placeholder="Company name"
+                      />
+                    </div>
+                  </div>
+
+                  {isEditingProfile && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Profile Picture</label>
+                      <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                        <input 
+                          type="file"
+                          id="profile-photo-upload"
+                          className="hidden"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                setIsUploading('profile');
+                                const url = await uploadImage(file);
+                                setProfileForm({...profileForm, photoURL: url});
+                              } catch (err) {
+                                alert(err instanceof Error ? err.message : 'Upload failed');
+                              } finally {
+                                setIsUploading(null);
+                              }
+                            }
+                          }}
+                        />
+                        <label 
+                          htmlFor="profile-photo-upload"
+                          className="flex items-center gap-3 bg-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 border border-slate-200 cursor-pointer hover:bg-slate-900 hover:text-white transition-all shadow-sm"
+                        >
+                          {isUploading === 'profile' ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+                          {isUploading === 'profile' ? 'Uploading...' : 'Upload New Photo'}
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {isEditingProfile && (
+                    <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
+                      <button 
+                        type="button"
+                        onClick={() => setIsEditingProfile(false)}
+                        className="px-8 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit"
+                        className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-105 transition-all"
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  )}
+                </form>
+              </div>
+            </div>
+
+            <div className="mt-12 text-center">
+              <button 
+                onClick={() => setShowMemberDashboard(false)}
+                className="text-slate-400 hover:text-slate-900 font-bold text-xs uppercase tracking-widest flex items-center gap-2 mx-auto transition-all"
+              >
+                <ArrowLeft size={16} />
+                Back to Home Portal
+              </button>
+            </div>
+          </div>
+        )}
 
         {showAdminDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12">
@@ -4467,76 +4811,200 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="space-y-8">
-                  {/* Option 1: Google */}
-                  <button 
-                    onClick={() => {
-                      setShowStaffLogin(false);
-                      signInWithGoogle();
-                    }}
-                    className="w-full flex items-center justify-center gap-4 bg-white border-2 border-slate-100 text-slate-700 py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:border-brand-primary hover:bg-slate-50 transition-all group"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24">
-                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                      <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"/>
-                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                    </svg>
-                    Continue with Google
-                  </button>
-
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-slate-100"></div>
-                    </div>
-                    <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest text-slate-300">
-                      <span className="bg-white px-4">or staff login</span>
-                    </div>
+                  <div className="flex bg-slate-50 p-1 rounded-2xl mb-8">
+                    <button 
+                      onClick={() => setAuthMode('login')}
+                      className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${authMode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                      Login
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setAuthMode('register');
+                        setRegisterStep('form');
+                      }}
+                      className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${authMode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                      Register
+                    </button>
                   </div>
 
-                  {/* Option 2: Staff */}
-                  <form onSubmit={handleStaffLogin} className="space-y-4">
-                    <div className="space-y-3">
+                  {authMode === 'login' ? (
+                    <div className="space-y-8">
+                      {/* Option 1: Google */}
+                      <button 
+                        onClick={() => {
+                          setShowStaffLogin(false);
+                          signInWithGoogle();
+                        }}
+                        className="w-full flex items-center justify-center gap-4 bg-white border-2 border-slate-100 text-slate-700 py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:border-brand-primary hover:bg-slate-50 transition-all group"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                          <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"/>
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        Continue with Google
+                      </button>
+
                       <div className="relative">
-                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                        <input 
-                          type="email"
-                          required
-                          value={staffLoginForm.email}
-                          onChange={(e) => setStaffLoginForm({...staffLoginForm, email: e.target.value})}
-                          className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
-                          placeholder="Staff Email"
-                        />
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-slate-100"></div>
+                        </div>
+                        <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest text-slate-300">
+                          <span className="bg-white px-4">or password login</span>
+                        </div>
                       </div>
-                      <div className="relative">
-                        <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                        <input 
-                          type="password"
-                          required
-                          value={staffLoginForm.password}
-                          onChange={(e) => setStaffLoginForm({...staffLoginForm, password: e.target.value})}
-                          className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
-                          placeholder="Staff Password"
-                        />
-                      </div>
+
+                      {/* Option 2: Email Login */}
+                      <form onSubmit={handleMemberLogin} className="space-y-4">
+                        <div className="space-y-3">
+                          <div className="relative">
+                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                            <input 
+                              type="email"
+                              required
+                              value={staffLoginForm.email}
+                              onChange={(e) => setStaffLoginForm({...staffLoginForm, email: e.target.value})}
+                              className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                              placeholder="Email Address"
+                            />
+                          </div>
+                          <div className="relative">
+                            <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                            <input 
+                              type="password"
+                              required
+                              value={staffLoginForm.password}
+                              onChange={(e) => setStaffLoginForm({...staffLoginForm, password: e.target.value})}
+                              className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                              placeholder="Password"
+                            />
+                          </div>
+                        </div>
+
+                        {staffLoginError && (
+                          <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-bold flex items-center gap-2">
+                            <Info size={14} />
+                            {staffLoginError}
+                          </div>
+                        )}
+
+                        <button 
+                          type="submit"
+                          disabled={isLoggingInStaff}
+                          className="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary transition-all disabled:opacity-50"
+                        >
+                          {isLoggingInStaff ? <Loader2 className="animate-spin" size={16} /> : "Login to Portal"}
+                        </button>
+                      </form>
                     </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {registerStep === 'form' ? (
+                        <form onSubmit={handleSendOTP} className="space-y-4">
+                          <div className="space-y-3">
+                            <div className="relative">
+                              <Users className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                              <input 
+                                type="text"
+                                required
+                                value={registerForm.name}
+                                onChange={(e) => setRegisterForm({...registerForm, name: e.target.value})}
+                                className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                                placeholder="Full Name"
+                              />
+                            </div>
+                            <div className="relative">
+                              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                              <input 
+                                type="email"
+                                required
+                                value={registerForm.email}
+                                onChange={(e) => setRegisterForm({...registerForm, email: e.target.value})}
+                                className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                                placeholder="Email Address"
+                              />
+                            </div>
+                            <div className="relative">
+                              <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                              <input 
+                                type="password"
+                                required
+                                minLength={6}
+                                value={registerForm.password}
+                                onChange={(e) => setRegisterForm({...registerForm, password: e.target.value})}
+                                className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium"
+                                placeholder="Password (min 6 chars)"
+                              />
+                            </div>
+                          </div>
 
-                    {staffLoginError && (
-                      <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-bold flex items-center gap-2">
-                        <Info size={14} />
-                        {staffLoginError}
-                      </div>
-                    )}
+                          {registerError && (
+                            <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-bold flex items-center gap-2">
+                              <Info size={14} />
+                              {registerError}
+                            </div>
+                          )}
 
-                    <button 
-                      type="submit"
-                      disabled={isLoggingInStaff}
-                      className="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary transition-all disabled:opacity-50"
-                    >
-                      {isLoggingInStaff ? <Loader2 className="animate-spin" size={16} /> : "Login to Portal"}
-                    </button>
-                  </form>
-                </div>
+                          <button 
+                            type="submit"
+                            disabled={isRegistering}
+                            className="w-full flex items-center justify-center gap-3 bg-brand-primary text-white py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:shadow-lg transition-all disabled:opacity-50"
+                          >
+                            {isRegistering ? <Loader2 className="animate-spin" size={16} /> : "Continue for OTP"}
+                          </button>
+                        </form>
+                      ) : (
+                        <form onSubmit={handleVerifyOTP} className="space-y-6">
+                          <div className="text-center">
+                            <div className="w-16 h-16 bg-brand-primary/5 rounded-full flex items-center justify-center mx-auto mb-4 text-brand-primary">
+                              <Mail size={32} />
+                            </div>
+                            <h4 className="font-bold text-slate-900">Verify your email</h4>
+                            <p className="text-xs text-slate-500 mt-2">Enter the 6-digit OTP sent to <span className="font-bold text-slate-900">{registerForm.email}</span></p>
+                          </div>
+
+                          <div className="flex justify-center">
+                            <input 
+                              type="text"
+                              required
+                              maxLength={6}
+                              value={otpCode}
+                              onChange={(e) => setOtpCode(e.target.value)}
+                              className="w-48 text-center px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-2xl font-black tracking-[0.5em] text-slate-900"
+                              placeholder="000000"
+                            />
+                          </div>
+
+                          {registerError && (
+                            <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-bold flex items-center gap-2">
+                              <Info size={14} />
+                              {registerError}
+                            </div>
+                          )}
+
+                          <div className="space-y-3">
+                            <button 
+                              type="submit"
+                              disabled={isRegistering}
+                              className="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary transition-all disabled:opacity-50"
+                            >
+                              {isRegistering ? <Loader2 className="animate-spin" size={16} /> : "Verify & Account Create"}
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => setRegisterStep('form')}
+                              className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-all"
+                            >
+                              Back to Details
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  )}
               </div>
             </motion.div>
           </div>

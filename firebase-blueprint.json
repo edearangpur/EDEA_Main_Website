@@ -160,6 +160,25 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "date", "description", "category"]
+    },
+    "userProfile": {
+      "title": "User Profile",
+      "description": "Association Member account profile",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "session": { "type": "string" },
+        "shift": { "type": "string", "enum": ["First", "Second"] },
+        "bloodGroup": { "type": "string" },
+        "companyName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["member_candidate", "member", "admin"] },
+        "isVerified": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "isVerified"]
     }
   },
   "firestore": {
@@ -190,6 +209,10 @@
     "notices/{noticeId}": {
       "schema": "notice",
       "description": "Collection of official notices"
+    },
+    "users/{userId}": {
+      "schema": "userProfile",
+      "description": "Association Member profiles"
     }
   }
 }
