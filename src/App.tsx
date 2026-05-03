@@ -38,7 +38,6 @@ import {
   Tag,
   PieChart,
   ArrowLeft,
-  User as UserIcon,
   Upload,
   Loader2,
   Image as ImageIcon
@@ -55,7 +54,6 @@ import {
   doc, 
   onSnapshot, 
   setDoc, 
-  updateDoc,
   addDoc,
   deleteDoc,
   collection,
@@ -363,24 +361,14 @@ export default function App() {
   const [showAllProgramsView, setShowAllProgramsView] = useState(false);
   const [showNoticesView, setShowNoticesView] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+  const [showMemberDashboard, setShowMemberDashboard] = useState(false);
   const [noticeSearch, setNoticeSearch] = useState('');
   const [noticeCategoryFilter, setNoticeCategoryFilter] = useState('All');
   const [selectedNoticeImage, setSelectedNoticeImage] = useState<string | null>(null);
 
-  const [showMemberDashboard, setShowMemberDashboard] = useState(false);
-  const [userProfile, setUserProfile] = useState<any>(null);
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [profileForm, setProfileForm] = useState({
-    name: '',
-    session: '',
-    shift: 'First',
-    bloodGroup: '',
-    companyName: '',
-    photoURL: ''
-  });
-
   // Firebase Auth & Config States
   const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [specializedRole, setSpecializedRole] = useState<'finance' | 'admin' | 'secretary' | null>(() => {
     const saved = sessionStorage.getItem('specializedRole');
@@ -612,6 +600,26 @@ export default function App() {
     date: new Date().toISOString().split('T')[0]
   });
 
+  const [savingProfile, setSavingProfile] = useState(false);
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setSavingProfile(true);
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        ...userProfile,
+        updatedAt: new Date().toISOString()
+      });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Profile updated successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'users');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   const [fullScreenImage, setFullScreenImage] = useState<number | null>(null);
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
   const [programForm, setProgramForm] = useState({
@@ -632,13 +640,35 @@ export default function App() {
     }
   });
 
-  // Auth Listener
+  // Auto-slide logic for Programs
   useEffect(() => {
+    // Auth Listener
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setIsAdmin(false);
+      setUserProfile(null);
       
       if (currentUser) {
+        // Fetch profile
+        const userRef = doc(db, 'users', currentUser.uid);
+        onSnapshot(userRef, (doc) => {
+          if (doc.exists()) {
+            setUserProfile(doc.data());
+          } else {
+            // Create profile if doesn't exist
+            const data = {
+              name: currentUser.displayName || '',
+              email: currentUser.email || '',
+              role: 'member_candidate',
+              isVerified: true,
+              createdAt: new Date().toISOString()
+            };
+            setDoc(userRef, data).then(() => setUserProfile(data));
+          }
+        }, (error) => {
+          console.warn("Profile fetch issue:", error);
+        });
+
         // 1. Check Super Admin (Hardcoded or collection)
         if (currentUser.email === 'edea.rangpur@gmail.com') {
           setIsAdmin(true);
@@ -674,11 +704,6 @@ export default function App() {
       }
     });
 
-    return () => unsubscribeAuth();
-  }, []);
-
-  // Firestore Data Listeners
-  useEffect(() => {
     // Test Connection to verify Firestore set up as per instructions
     const testConnection = async () => {
       try {
@@ -693,9 +718,9 @@ export default function App() {
     testConnection();
 
     // Config Listener
-    const unsubscribeConfig = onSnapshot(doc(db, 'config', 'association'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+    const unsubscribeConfig = onSnapshot(doc(db, 'config', 'association'), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
         setAssociationConfig({
           mission: data.mission || associationConfig.mission,
           vision: data.vision || associationConfig.vision,
@@ -710,13 +735,13 @@ export default function App() {
         setEditHeroImages(data.heroImages || []);
       }
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'config/association');
+      console.warn("Config fetch issue:", error);
     });
 
     // Portal Config Listener
-    const unsubscribePortal = onSnapshot(doc(db, 'config', 'portal'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+    const unsubscribePortal = onSnapshot(doc(db, 'config', 'portal'), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
         const updatedPortal = {
           title: data.title || portalConfig.title,
           secretaryName: data.secretaryName || portalConfig.secretaryName,
@@ -731,7 +756,7 @@ export default function App() {
         setEditPortal(updatedPortal);
       }
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'config/portal');
+      console.warn("Portal config fetch issue:", error);
     });
 
     // Programs Listener
@@ -742,7 +767,7 @@ export default function App() {
       })) as Program[];
       setPrograms(programsData);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'programs');
+      console.error("Programs fetch issue:", error);
     });
 
     // Specialized Accounts Listener (Super Admin only)
@@ -786,28 +811,8 @@ export default function App() {
       })) as Notice[];
       setNotices(data);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'notices');
+      console.error("Notices fetch issue:", error);
     });
-
-    let unsubscribeProfile: (() => void) | null = null;
-    if (user) {
-      unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
-        if (snapshot.exists()) {
-          const profile = snapshot.data();
-          setUserProfile(profile);
-          setProfileForm({
-            name: profile.name || '',
-            session: profile.session || '',
-            shift: profile.shift || 'First',
-            bloodGroup: profile.bloodGroup || '',
-            companyName: profile.companyName || '',
-            photoURL: profile.photoURL || ''
-          });
-        }
-      }, (error) => {
-        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-      });
-    }
 
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
@@ -815,15 +820,15 @@ export default function App() {
 
     return () => {
       clearInterval(programTimer);
+      unsubscribeAuth();
       unsubscribeConfig();
       unsubscribePortal();
       unsubscribePrograms();
       unsubscribeNotices();
       unsubscribeAccounts?.();
       unsubscribeFinances?.();
-      unsubscribeProfile?.();
     };
-  }, [programs.length, isAdmin, specializedRole, user]);
+  }, [programs.length, isAdmin, specializedRole]);
 
   const featuredProgram = programs.find(p => p.featured) || programs[0];
   
@@ -918,22 +923,6 @@ export default function App() {
     } catch (error) {
       console.error('Download failed:', error);
       window.open(url, '_blank');
-    }
-  };
-
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
-    try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        ...profileForm,
-        updatedAt: serverTimestamp()
-      });
-      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Profile updated successfully!' });
-      setIsEditingProfile(false);
-      setTimeout(() => setSaveStatus(null), 3000);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'users');
     }
   };
 
@@ -1085,6 +1074,7 @@ export default function App() {
                   setShowAllMembers(false);
                   setShowNoticesView(false);
                   setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
                   window.scrollTo({ top: 0, behavior: 'smooth' }); 
                 }} 
                 className="hover:text-brand-primary transition-colors font-medium text-slate-600"
@@ -1098,6 +1088,7 @@ export default function App() {
                   setShowAllMembers(false);
                   setShowNoticesView(false);
                   setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
                   setSelectedProgram(null);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }} 
@@ -1112,6 +1103,7 @@ export default function App() {
                   setShowFullCommittee(false);
                   setShowAllMembers(false);
                   setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
                   setSelectedProgram(null);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }} 
@@ -1126,6 +1118,7 @@ export default function App() {
                   setShowFullCommittee(false);
                   setShowNoticesView(false);
                   setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
                   setSelectedProgram(null);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
@@ -1141,18 +1134,38 @@ export default function App() {
                   setShowAllMembers(false);
                   setShowNoticesView(false);
                   setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
                   setSelectedProgram(null);
                 }}
                 className="hover:text-brand-primary transition-colors font-medium text-slate-600"
               >
                 Executive Committee
               </button>
+              {user && (
+                <button 
+                  onClick={() => {
+                    setShowMemberDashboard(true);
+                    setShowAdminDashboard(false);
+                    setShowNoticesView(false);
+                    setShowAllProgramsView(false);
+                    setShowFullCommittee(false);
+                    setShowAllMembers(false);
+                    setSelectedProgram(null);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className={`px-4 py-2 rounded-xl transition-all font-bold text-xs uppercase tracking-widest ${showMemberDashboard ? 'bg-brand-primary text-white' : 'text-brand-primary hover:bg-brand-primary/5'}`}
+                >
+                  <Users size={14} className="inline mr-2" />
+                  My Dashboard
+                </button>
+              )}
             </div>
 
               {isAdmin && (
                 <button 
                   onClick={() => {
                     setShowAdminDashboard(true);
+                    setShowMemberDashboard(false);
                     setShowNoticesView(false);
                     setShowAllProgramsView(false);
                     setShowFullCommittee(false);
@@ -1209,23 +1222,6 @@ export default function App() {
               <div className="flex items-center gap-4">
                 {user || specializedRole ? (
                   <div className="flex items-center gap-3">
-                    {user && !isAdmin && (
-                      <button 
-                        onClick={() => {
-                          setShowMemberDashboard(true);
-                          setShowAdminDashboard(false);
-                          setShowNoticesView(false);
-                          setShowAllProgramsView(false);
-                          setShowFullCommittee(false);
-                          setShowAllMembers(false);
-                          setSelectedProgram(null);
-                        }}
-                        className="hidden md:flex items-center gap-2 bg-brand-primary/5 text-brand-primary px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-primary hover:text-white transition-all underline-offset-4"
-                      >
-                        <UserIcon size={14} />
-                        My Profile
-                      </button>
-                    )}
                     <div className="hidden sm:flex flex-col items-end">
                       <span className="text-[10px] font-bold text-slate-900 leading-none">
                         {user?.displayName || sessionStorage.getItem('specializedEmail')?.split('@')[0] || 'Staff Member'}
@@ -1235,9 +1231,6 @@ export default function App() {
                       )}
                       {specializedRole && (
                         <span className="text-[8px] font-bold text-brand-secondary uppercase tracking-widest mt-0.5">{specializedRole} Officer</span>
-                      )}
-                      {user && !isAdmin && (
-                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{userProfile?.role === 'member' ? 'Member' : 'Candidate'}</span>
                       )}
                     </div>
                     <button 
@@ -1335,6 +1328,26 @@ export default function App() {
                 >
                   Directory
                 </button>
+                
+                {user && (
+                  <button 
+                    onClick={() => { 
+                      setShowMemberDashboard(true);
+                      setShowAdminDashboard(false);
+                      setShowNoticesView(false);
+                      setShowAllProgramsView(false); 
+                      setShowFullCommittee(false); 
+                      setShowAllMembers(false); 
+                      setSelectedProgram(null); 
+                      setIsMenuOpen(false); 
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }} 
+                    className="block w-full text-left text-brand-primary font-medium"
+                  >
+                    My Dashboard
+                  </button>
+                )}
+
                 <a href="#mission" onClick={() => setIsMenuOpen(false)} className="block text-slate-600 font-medium">Mission & Vision</a>
                 <button 
                   onClick={() => { 
@@ -1455,7 +1468,7 @@ export default function App() {
       </nav>
 
       {/* Hero / Featured Program (Only show on Home) */}
-      {!showAllProgramsView && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && (
+      {!showAllProgramsView && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && !showMemberDashboard && (
         <header className="relative min-h-[90vh] flex flex-col overflow-hidden px-4">
           {/* Full Background Image Slider */}
           <div className="absolute inset-0 z-0">
@@ -1578,7 +1591,7 @@ export default function App() {
       )}
 
       <main className="flex-grow">
-        {!showAllProgramsView && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && (
+        {!showAllProgramsView && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-16 space-y-24">
             {/* Landing Page Content Sections */}
         
@@ -2571,174 +2584,158 @@ export default function App() {
 
 
         {showMemberDashboard && user && (
-          <div className="max-w-4xl mx-auto px-4 sm:px-8 py-8 md:py-12">
-            <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
-              {/* Profile Header */}
-              <div className="bg-slate-900 p-8 md:p-12 text-white relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-8 opacity-10">
-                  <UserIcon size={120} />
+          <div className="max-w-4xl mx-auto px-4 py-12">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+              <div className="flex items-center gap-3">
+                <div className="bg-brand-primary p-3 rounded-2xl text-white">
+                  <Users size={24} />
                 </div>
-                <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
-                  <div className="relative group">
-                    <div className="w-32 h-32 rounded-3xl overflow-hidden border-4 border-white/20 shadow-2xl bg-white/10 flex items-center justify-center backdrop-blur-sm">
-                      {userProfile?.photoURL ? (
-                        <img src={userProfile.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                      ) : (
-                        <UserIcon size={48} className="text-white/30" />
-                      )}
-                    </div>
+                <div>
+                  <h1 className="text-3xl font-display font-bold text-slate-900 italic">Member Dashboard</h1>
+                  <p className="text-slate-500 text-sm">Welcome back, {userProfile?.name || user.displayName || 'Member'}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowMemberDashboard(false)}
+                className="flex items-center gap-2 text-slate-500 hover:text-brand-primary font-bold text-sm transition-all"
+              >
+                <ArrowLeft size={16} />
+                Back to Website
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-[1fr_2fr] gap-8">
+              <div className="space-y-6">
+                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm text-center">
+                  <div className="relative w-32 h-32 mx-auto mb-4 group">
+                    <img 
+                      src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                      alt="Profile" 
+                      className="w-full h-full rounded-full object-cover border-4 border-brand-primary/10"
+                    />
+                    <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                      <Upload size={24} className="text-white" />
+                      <input 
+                        type="file" 
+                        className="hidden" 
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              setIsUploading('profile');
+                              const url = await uploadImage(file);
+                              setUserProfile((prev: any) => ({ ...prev, profilePicture: url }));
+                            } catch (err: any) {
+                              alert(err.message);
+                            } finally {
+                              setIsUploading(null);
+                            }
+                          }
+                        }}
+                      />
+                    </label>
+                    {isUploading === 'profile' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/60 rounded-full">
+                        <Loader2 className="animate-spin text-brand-primary" />
+                      </div>
+                    )}
                   </div>
-                  <div className="text-center md:text-left">
-                    <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
-                      <span className="bg-brand-primary px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-                        {userProfile?.role === 'member' ? 'Verified Member' : 'Candidate Account'}
-                      </span>
-                    </div>
-                    <h2 className="text-3xl md:text-4xl font-display font-bold italic">{userProfile?.name || 'Incomplete Profile'}</h2>
-                    <p className="text-white/60 text-sm mt-1">{user.email}</p>
+                  <h3 className="font-bold text-slate-900">{userProfile?.name}</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">{userProfile?.role?.replace('_', ' ')}</p>
+                </div>
+
+                <div className="bg-brand-primary/5 rounded-3xl p-6 border border-brand-primary/10">
+                  <div className="flex items-center gap-2 mb-4 text-brand-primary">
+                    <ShieldCheck size={18} />
+                    <span className="font-bold text-sm">Account Status</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-slate-500">Verified Member</span>
+                    <span className={userProfile?.isVerified ? "text-green-600 font-bold" : "text-amber-600 font-bold"}>
+                      {userProfile?.isVerified ? "Yes" : "Pending"}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Profile Form */}
-              <div className="p-8 md:p-12">
-                <div className="flex items-center justify-between mb-8">
-                  <h3 className="font-display font-bold text-2xl text-slate-900">Personal Information</h3>
-                  <button 
-                    onClick={() => setIsEditingProfile(!isEditingProfile)}
-                    className="flex items-center gap-2 text-brand-primary font-bold text-xs uppercase tracking-widest hover:underline"
-                  >
-                    {isEditingProfile ? 'Cancel Editing' : 'Edit Profile'}
-                  </button>
-                </div>
+              <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                  <Settings size={20} className="text-brand-primary" />
+                  Edit Profile Information
+                </h2>
 
-                <form onSubmit={handleSaveProfile} className="space-y-8">
-                  <div className="grid md:grid-cols-2 gap-8">
+                <form onSubmit={handleUpdateProfile} className="space-y-6">
+                  <div className="grid sm:grid-cols-2 gap-6">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Full Name</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Full Name</label>
                       <input 
-                        disabled={!isEditingProfile}
                         type="text"
-                        value={profileForm.name}
-                        onChange={(e) => setProfileForm({...profileForm, name: e.target.value})}
-                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                        value={userProfile?.name || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, name: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
                         placeholder="Your full name"
+                        required
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Session (e.g., 2018-19)</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Session</label>
                       <input 
-                        disabled={!isEditingProfile}
                         type="text"
-                        value={profileForm.session}
-                        onChange={(e) => setProfileForm({...profileForm, session: e.target.value})}
-                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
-                        placeholder="Session year"
+                        value={userProfile?.session || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, session: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+                        placeholder="e.g. 2020-21"
                       />
                     </div>
-                  </div>
-
-                  <div className="grid md:grid-cols-3 gap-8">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Shift</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Shift</label>
                       <select 
-                        disabled={!isEditingProfile}
-                        value={profileForm.shift}
-                        onChange={(e) => setProfileForm({...profileForm, shift: e.target.value})}
-                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
+                        value={userProfile?.shift || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, shift: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
                       >
-                        <option value="First">First Shift</option>
-                        <option value="Second">Second Shift</option>
+                        <option value="">Select Shift</option>
+                        <option value="1st">1st Shift</option>
+                        <option value="2nd">2nd Shift</option>
+                        <option value="Days">Day</option>
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Blood Group</label>
-                      <input 
-                        disabled={!isEditingProfile}
-                        type="text"
-                        value={profileForm.bloodGroup}
-                        onChange={(e) => setProfileForm({...profileForm, bloodGroup: e.target.value})}
-                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
-                        placeholder="e.g., O+ (Positive)"
-                      />
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Blood Group</label>
+                      <select 
+                        value={userProfile?.bloodGroup || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, bloodGroup: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+                      >
+                        <option value="">Select Group</option>
+                        {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+                          <option key={bg} value={bg}>{bg}</option>
+                        ))}
+                      </select>
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Company / Current Workplace</label>
+                    <div className="sm:col-span-2 space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Company Name</label>
                       <input 
-                        disabled={!isEditingProfile}
                         type="text"
-                        value={profileForm.companyName}
-                        onChange={(e) => setProfileForm({...profileForm, companyName: e.target.value})}
-                        className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold disabled:opacity-60"
-                        placeholder="Company name"
+                        value={userProfile?.companyName || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, companyName: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+                        placeholder="Current workplace or company"
                       />
                     </div>
                   </div>
 
-                  {isEditingProfile && (
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Profile Picture</label>
-                      <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-2xl border border-slate-100">
-                        <input 
-                          type="file"
-                          id="profile-photo-upload"
-                          className="hidden"
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              try {
-                                setIsUploading('profile');
-                                const url = await uploadImage(file);
-                                setProfileForm({...profileForm, photoURL: url});
-                              } catch (err) {
-                                alert(err instanceof Error ? err.message : 'Upload failed');
-                              } finally {
-                                setIsUploading(null);
-                              }
-                            }
-                          }}
-                        />
-                        <label 
-                          htmlFor="profile-photo-upload"
-                          className="flex items-center gap-3 bg-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 border border-slate-200 cursor-pointer hover:bg-slate-900 hover:text-white transition-all shadow-sm"
-                        >
-                          {isUploading === 'profile' ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
-                          {isUploading === 'profile' ? 'Uploading...' : 'Upload New Photo'}
-                        </label>
-                      </div>
-                    </div>
-                  )}
-
-                  {isEditingProfile && (
-                    <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
-                      <button 
-                        type="button"
-                        onClick={() => setIsEditingProfile(false)}
-                        className="px-8 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all"
-                      >
-                        Cancel
-                      </button>
-                      <button 
-                        type="submit"
-                        className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-105 transition-all"
-                      >
-                        Save Changes
-                      </button>
-                    </div>
-                  )}
+                  <button 
+                    type="submit"
+                    disabled={savingProfile}
+                    className="w-full bg-brand-primary text-white py-4 rounded-xl font-bold uppercase tracking-widest hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {savingProfile ? <Loader2 className="animate-spin" /> : <Save size={18} />}
+                    Update Profile Information
+                  </button>
                 </form>
               </div>
-            </div>
-
-            <div className="mt-12 text-center">
-              <button 
-                onClick={() => setShowMemberDashboard(false)}
-                className="text-slate-400 hover:text-slate-900 font-bold text-xs uppercase tracking-widest flex items-center gap-2 mx-auto transition-all"
-              >
-                <ArrowLeft size={16} />
-                Back to Home Portal
-              </button>
             </div>
           </div>
         )}

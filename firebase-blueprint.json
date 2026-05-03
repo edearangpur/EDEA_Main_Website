@@ -168,13 +168,13 @@
       "properties": {
         "name": { "type": "string" },
         "email": { "type": "string" },
-        "session": { "type": "string" },
-        "shift": { "type": "string", "enum": ["First", "Second"] },
-        "bloodGroup": { "type": "string" },
-        "companyName": { "type": "string" },
-        "photoURL": { "type": "string" },
         "role": { "type": "string", "enum": ["member_candidate", "member", "admin"] },
         "isVerified": { "type": "boolean" },
+        "session": { "type": "string", "description": "Academic or professional session" },
+        "shift": { "type": "string", "description": "Work or study shift" },
+        "bloodGroup": { "type": "string", "description": "Member's blood group" },
+        "companyName": { "type": "string", "description": "Current employer or company" },
+        "profilePicture": { "type": "string", "description": "URL to the member's profile picture" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
