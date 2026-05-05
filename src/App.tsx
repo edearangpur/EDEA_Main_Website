@@ -40,6 +40,9 @@ import {
   ArrowLeft,
   Upload,
   Loader2,
+  Activity,
+  Check,
+  CreditCard,
   Image as ImageIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -56,6 +59,7 @@ import {
   setDoc, 
   addDoc,
   deleteDoc,
+  updateDoc,
   collection,
   serverTimestamp,
   getDocFromServer,
@@ -370,6 +374,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [membershipSettings, setMembershipSettings] = useState<any>(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [savingMembershipSettings, setSavingMembershipSettings] = useState(false);
   const [specializedRole, setSpecializedRole] = useState<'finance' | 'admin' | 'secretary' | null>(() => {
     const saved = sessionStorage.getItem('specializedRole');
     return (saved === 'finance' || saved === 'admin' || saved === 'secretary') ? saved : null;
@@ -601,6 +608,26 @@ export default function App() {
   });
 
   const [savingProfile, setSavingProfile] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({ transactionId: '', method: 'bkash' });
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+
+  const handleSubmitPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !paymentForm.transactionId) return;
+    setSubmittingPayment(true);
+    try {
+      await updateUserStatus(user.uid, 'pending_finance', {
+        transactionId: paymentForm.transactionId,
+        paymentMethod: paymentForm.method,
+        paymentAmount: membershipSettings?.membershipAmount || 100,
+        paymentSubmittedAt: new Date().toISOString()
+      });
+      setPaymentForm({ transactionId: '', method: 'bkash' });
+    } finally {
+      setSubmittingPayment(false);
+    }
+  };
+
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -660,6 +687,7 @@ export default function App() {
               name: currentUser.displayName || '',
               email: currentUser.email || '',
               role: 'member_candidate',
+              membershipStatus: 'unpaid',
               isVerified: true,
               createdAt: new Date().toISOString()
             };
@@ -683,7 +711,7 @@ export default function App() {
         // Only if not already set by staff login
         if (!sessionStorage.getItem('specializedRole')) {
           try {
-            const q = query(collection(db, 'specializedAccounts'), where('email', '==', currentUser.email));
+            const q = query(collection(db, 'specializedAccounts'), where('email', '==', currentUser.email.toLowerCase()));
             const snapshot = await getDocs(q);
             if (!snapshot.empty) {
               const data = snapshot.docs[0].data() as SpecializedAccount;
@@ -789,7 +817,7 @@ export default function App() {
 
     // Finance Listener (Finance Officer only)
     let unsubscribeFinances: (() => void) | null = null;
-    if (specializedRole === 'finance') {
+    if (specializedRole === 'finance' || isAdmin) {
       unsubscribeFinances = onSnapshot(query(collection(db, 'finances'), orderBy('date', 'desc')), (snapshot) => {
         const data = snapshot.docs.map(doc => ({
           id: doc.id,
@@ -814,6 +842,32 @@ export default function App() {
       console.error("Notices fetch issue:", error);
     });
 
+    // Membership Settings Listener
+    const unsubscribeMembership = onSnapshot(doc(db, 'config', 'membership'), (doc) => {
+      if (doc.exists()) {
+        setMembershipSettings(doc.data());
+      }
+    }, (error) => {
+      if (error?.message && !error.message.includes('permission') && !error.message.includes('Unexpected state')) {
+        handleFirestoreError(error, OperationType.GET, 'config/membership');
+      }
+    });
+
+    // All Users Listener (for management/approvals)
+    let unsubscribeAllUsers: (() => void) | null = null;
+    if (isAdmin || specializedRole === 'finance' || specializedRole === 'secretary') {
+      unsubscribeAllUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+        setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, (error) => {
+        if (error?.message && !error.message.includes('Unexpected state')) {
+          // Silently handle if permissions changed
+          if (!error.message.includes('permission')) {
+            handleFirestoreError(error, OperationType.GET, 'users');
+          }
+        }
+      });
+    }
+
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
     }, 5000);
@@ -827,18 +881,55 @@ export default function App() {
       unsubscribeNotices();
       unsubscribeAccounts?.();
       unsubscribeFinances?.();
+      unsubscribeMembership();
+      unsubscribeAllUsers?.();
     };
   }, [programs.length, isAdmin, specializedRole]);
+
+  const handleUpdateMembershipSettings = async (data: any) => {
+    setSavingMembershipSettings(true);
+    try {
+      await setDoc(doc(db, 'config', 'membership'), {
+        ...data,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Membership settings updated!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'config/membership');
+    } finally {
+      setSavingMembershipSettings(false);
+    }
+  };
+
+  const updateUserStatus = async (userId: string, status: string, additionalData = {}) => {
+    try {
+      const userRef = doc(db, 'users', userId);
+      const updateData: any = { 
+        membershipStatus: status,
+        updatedAt: new Date().toISOString(),
+        ...additionalData 
+      };
+      if (status === 'approved') {
+        updateData.role = 'member';
+      }
+      await updateDoc(userRef, updateData);
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: `Status updated to ${status}` });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
+    }
+  };
 
   const featuredProgram = programs.find(p => p.featured) || programs[0];
   
   const effectiveHeroImages = (associationConfig.heroImages && associationConfig.heroImages.length > 0) ? associationConfig.heroImages : HERO_IMAGES;
 
-  const allSessions = Array.from(new Set(MEMBERS.map(m => m.session))).sort().reverse();
+  const allSessions = Array.from(new Set(allUsers.filter(u => u.membershipStatus === 'approved').map(u => u.session || 'Unknown'))).sort().reverse();
 
-  const filteredMembers = MEMBERS.filter(m => {
-    const matchesSearch = m.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
-                         m.institution.toLowerCase().includes(memberSearch.toLowerCase());
+  const filteredMembers = allUsers.filter(m => m.membershipStatus === 'approved').filter(m => {
+    const matchesSearch = (m.name || '').toLowerCase().includes(memberSearch.toLowerCase()) ||
+                         (m.companyName || '').toLowerCase().includes(memberSearch.toLowerCase());
     const matchesSession = sessionFilter === 'All' || m.session === sessionFilter;
     return matchesSearch && matchesSession;
   });
@@ -1813,23 +1904,42 @@ export default function App() {
             className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide snap-x"
             style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
           >
-            {MEMBERS.slice(0, 6).map((member) => (
+            {allUsers.filter(u => u.membershipStatus === 'approved').slice(0, 6).map((member) => (
               <motion.div
                 key={member.id}
                 whileHover={{ y: -5 }}
                 className="min-w-[200px] bg-white rounded-2xl border-b-4 border-brand-secondary/20 hover:border-brand-secondary p-2 shadow-sm group snap-start transition-all"
               >
                 <div className="relative aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-50">
-                  {member.image && <img src={member.image} alt={member.name} className="w-full h-full object-cover" />}
+                  <img 
+                    src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
+                    alt={member.name} 
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
+                  />
                   <div className="absolute inset-0 bg-gradient-to-t from-brand-secondary/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  {member.bloodGroup && (
+                    <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
+                      {member.bloodGroup}
+                    </div>
+                  )}
                 </div>
                 <div className="px-2 pb-2 text-center">
                   <h3 className="font-display font-bold text-xs text-slate-900 mb-0.5 truncate">{member.name}</h3>
-                  <div className="text-slate-400 text-[9px] mb-2 truncate font-medium">{member.institution}</div>
-                  <div className="inline-block px-2 py-0.5 bg-brand-secondary/10 text-brand-secondary rounded-full text-[8px] font-black uppercase tracking-tighter">Session: {member.session}</div>
+                  <div className="text-slate-400 text-[9px] mb-2 truncate font-medium">{member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}</div>
+                  <div className="inline-block px-2 py-0.5 bg-brand-secondary/10 text-brand-secondary rounded-full text-[8px] font-black uppercase tracking-tighter">Session: {member.session || 'N/A'}</div>
                 </div>
               </motion.div>
             ))}
+            
+            {allUsers.filter(u => u.membershipStatus === 'approved').length === 0 && (
+              [...Array(6)].map((_, i) => (
+                <div key={i} className="min-w-[200px] bg-slate-50 rounded-2xl p-2 animate-pulse border border-slate-100">
+                  <div className="aspect-[3/4] bg-slate-200 rounded-xl mb-3" />
+                  <div className="h-3 w-3/4 bg-slate-200 rounded mx-auto mb-2" />
+                  <div className="h-2 w-1/2 bg-slate-200 rounded mx-auto" />
+                </div>
+              ))
+            )}
             
             {/* See More Card */}
             <motion.button
@@ -2657,9 +2767,111 @@ export default function App() {
                     </span>
                   </div>
                 </div>
+
+                {/* Membership Status Tracker */}
+                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm">
+                  <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                    <Activity size={18} className="text-brand-primary" />
+                    Membership Journey
+                  </h3>
+                  <div className="space-y-6">
+                    {[
+                      { label: 'Payment Submitted', status: ['pending_finance', 'pending_secretary', 'approved', 'declined_finance', 'declined_secretary'].includes(userProfile?.membershipStatus) },
+                      { 
+                        label: 'Finance Approval', 
+                        status: ['pending_secretary', 'approved', 'declined_secretary'].includes(userProfile?.membershipStatus) ? 'success' : 
+                                (userProfile?.membershipStatus === 'declined_finance' ? 'error' : 
+                                (userProfile?.membershipStatus === 'pending_finance' ? 'pending' : 'waiting')) 
+                      },
+                      { 
+                        label: 'Secretary Approval', 
+                        status: userProfile?.membershipStatus === 'approved' ? 'success' : 
+                                (userProfile?.membershipStatus === 'declined_secretary' ? 'error' : 
+                                (userProfile?.membershipStatus === 'pending_secretary' ? 'pending' : 'waiting')) 
+                      }
+                    ].map((step, idx) => (
+                      <div key={idx} className="flex gap-4 items-start relative">
+                        {idx !== 2 && <div className="absolute left-[9px] top-6 w-[2px] h-8 bg-slate-100" />}
+                        <div className={`w-5 h-5 rounded-full z-10 flex items-center justify-center ${
+                          step.status === true || step.status === 'success' ? 'bg-green-500 text-white' : 
+                          step.status === 'error' ? 'bg-red-500 text-white' :
+                          step.status === 'pending' ? 'bg-amber-500 text-white animate-pulse' : 'bg-slate-200'
+                        }`}>
+                          {step.status === true || step.status === 'success' ? <Check size={12} strokeWidth={4} /> : 
+                           step.status === 'error' ? <X size={12} strokeWidth={4} /> : null}
+                        </div>
+                        <div className="flex-grow">
+                          <p className={`text-xs font-bold leading-none ${step.status === 'waiting' ? 'text-slate-400' : 'text-slate-900'}`}>{step.label}</p>
+                          {step.status === 'pending' && <p className="text-[10px] text-amber-600 mt-1">Pending Review</p>}
+                          {step.status === 'error' && <p className="text-[10px] text-red-600 mt-1">Declined — Please contact office</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
+              <div className="space-y-8">
+                {/* Membership Payment Section */}
+                {(!userProfile?.membershipStatus || userProfile.membershipStatus === 'unpaid' || userProfile.membershipStatus.startsWith('declined')) && (
+                  <div className="bg-brand-primary/5 rounded-3xl p-8 border-2 border-dashed border-brand-primary/20">
+                    <div className="flex items-start gap-4 mb-6">
+                      <div className="bg-brand-primary p-3 rounded-2xl text-white">
+                        <CreditCard size={24} />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-slate-900 italic">Become an Association Member</h2>
+                        <p className="text-slate-600 text-sm mt-1">{membershipSettings?.paymentInstructions || "Please follow the instructions below to complete your registration."}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4 mb-8">
+                      <div className="bg-white p-4 rounded-2xl border border-brand-primary/10">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">bKash Personal</p>
+                        <p className="font-mono font-bold text-slate-900">{membershipSettings?.bkashNumber || '017XXXXXXXX'}</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-2xl border border-brand-primary/10">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Nagad Personal</p>
+                        <p className="font-mono font-bold text-slate-900">{membershipSettings?.nagadNumber || '017XXXXXXXX'}</p>
+                      </div>
+                      <div className="sm:col-span-2 bg-brand-primary text-white p-4 rounded-2xl flex justify-between items-center">
+                        <span className="font-bold text-sm">Required Fee</span>
+                        <span className="text-2xl font-display font-bold italic">{membershipSettings?.membershipAmount || 100} BDT</span>
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleSubmitPayment} className="space-y-4">
+                      <div className="grid sm:grid-cols-[120px_1fr] gap-4">
+                        <select 
+                          value={paymentForm.method}
+                          onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}
+                          className="bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20"
+                        >
+                          <option value="bkash">bKash</option>
+                          <option value="nagad">Nagad</option>
+                        </select>
+                        <input 
+                          type="text"
+                          value={paymentForm.transactionId}
+                          onChange={(e) => setPaymentForm({ ...paymentForm, transactionId: e.target.value })}
+                          placeholder="Enter Transaction ID"
+                          className="bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
+                          required
+                        />
+                      </div>
+                      <button 
+                        type="submit"
+                        disabled={submittingPayment}
+                        className="w-full bg-brand-primary text-white py-4 rounded-xl font-bold uppercase tracking-widest hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-primary/20"
+                      >
+                        {userProfile?.membershipStatus?.startsWith('declined') ? 'Resubmit Payment Information' : 'Become a Member — Pay Now'}
+                        {submittingPayment && <Loader2 className="animate-spin" />}
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
                 <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
                   <Settings size={20} className="text-brand-primary" />
                   Edit Profile Information
@@ -2738,7 +2950,8 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {showAdminDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12">
@@ -2853,6 +3066,31 @@ export default function App() {
                   </button>
                 )}
 
+                {(specializedRole === 'finance' || specializedRole === 'secretary') && (
+                  <button 
+                    onClick={() => setAdminTab('approvals')}
+                    className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${adminTab === 'approvals' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <Users size={18} />
+                      <span className="font-bold text-sm">Approvals</span>
+                    </div>
+                    {allUsers.filter(u => {
+                      if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance';
+                      if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary';
+                      return false;
+                    }).length > 0 && (
+                      <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                        {allUsers.filter(u => {
+                          if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance';
+                          if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary';
+                          return false;
+                        }).length}
+                      </span>
+                    )}
+                  </button>
+                )}
+
                 {isAdmin && (
                   <>
                     <button 
@@ -2862,9 +3100,12 @@ export default function App() {
                       <FileText size={18} />
                       <span className="font-bold text-sm">Notice Management</span>
                     </button>
-                    <button className="w-full flex items-center gap-4 p-4 bg-white text-slate-300 rounded-2xl cursor-not-allowed border border-slate-50 opacity-50">
-                      <Users size={18} />
-                      <span className="font-bold text-sm">Member Approvals</span>
+                    <button 
+                      onClick={() => setAdminTab('membership-config')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'membership-config' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <CreditCard size={18} />
+                      <span className="font-bold text-sm">Membership Setup</span>
                     </button>
                   </>
                 )}
@@ -3589,176 +3830,231 @@ export default function App() {
                     </div>
                   </div>
                 ) : adminTab === 'finance' ? (
-                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-                    <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-                      <div>
-                        <h3 className="font-display font-bold text-xl text-slate-900">Finance Ledger & Accounts</h3>
-                        <p className="text-xs text-slate-500 mt-1">Track association income and expenditures.</p>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
-                          <div className="text-xl font-display font-bold text-slate-900">
-                            ৳ {financeEntries.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
+                  <div className="space-y-6">
+                    {/* Integrated Payment Approval Queue */}
+                    {allUsers.filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance').length > 0 && (
+                      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8">
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <h3 className="font-display font-bold text-xl text-slate-900 leading-none">Pending Payment Approvals</h3>
+                            <p className="text-[10px] text-slate-400 mt-2 font-medium uppercase tracking-widest">Verify transactions before membership activation</p>
+                          </div>
+                          <div className="bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-amber-100 flex items-center gap-2">
+                            <Clock size={12} /> {allUsers.filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance').length} Pending
                           </div>
                         </div>
-                        <button 
-                          onClick={() => setShowFinanceForm(!showFinanceForm)}
-                          className="bg-slate-900 text-white p-3 rounded-xl hover:bg-brand-primary transition-all"
-                        >
-                          {showFinanceForm ? <Minus size={20} /> : <Plus size={20} />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-8 space-y-8">
-                      {showFinanceForm && (
-                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-6">
-                          <div className="grid md:grid-cols-3 gap-6">
-                            <div className="space-y-4">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Entry Type</label>
-                              <div className="flex gap-2 p-1 bg-white rounded-xl border border-slate-200">
+                        <div className="grid gap-4">
+                          {allUsers
+                            .filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance')
+                            .map(m => (
+                            <div key={m.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-brand-primary/20 transition-all">
+                              <div>
+                                <div className="flex items-center gap-3 mb-2">
+                                  <h4 className="font-bold text-slate-900">{m.name}</h4>
+                                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${
+                                    (m.membershipStatus || '').includes('declined') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+                                  }`}>
+                                    {(m.membershipStatus || 'unpaid').replace('_', ' ')}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px]">
+                                  <span className="text-slate-400">Method: <span className="text-slate-600 font-bold uppercase">{m.paymentMethod}</span></span>
+                                  <span className="text-slate-400">TXID: <span className="text-slate-600 font-mono font-bold">{m.transactionId}</span></span>
+                                  <span className="text-slate-400">Amount: <span className="text-slate-600 font-bold tracking-tighter">৳{m.paymentAmount}</span></span>
+                                  <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{new Date(m.paymentSubmittedAt).toLocaleDateString()}</span></span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
                                 <button 
-                                  onClick={() => setFinanceForm({...financeForm, type: 'income'})}
-                                  className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'income' ? 'bg-green-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                  onClick={() => updateUserStatus(m.id, 'pending_secretary')}
+                                  className="px-6 py-2 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all flex items-center gap-2 shadow-sm"
                                 >
-                                  Income
+                                  <Check size={14} strokeWidth={3} /> Approve
                                 </button>
                                 <button 
-                                  onClick={() => setFinanceForm({...financeForm, type: 'expense'})}
-                                  className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'expense' ? 'bg-red-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                  onClick={() => updateUserStatus(m.id, 'declined_finance')}
+                                  className="px-6 py-2 bg-white border border-red-200 text-red-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-all flex items-center gap-2"
                                 >
-                                  Expense
+                                  <X size={14} strokeWidth={3} /> Decline
                                 </button>
                               </div>
                             </div>
-                            <div className="space-y-4">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Amount (৳)</label>
-                              <input 
-                                type="number"
-                                value={financeForm.amount || ''}
-                                onChange={(e) => setFinanceForm({...financeForm, amount: parseFloat(e.target.value) || 0})}
-                                className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
-                                placeholder="0.00"
-                              />
-                            </div>
-                            <div className="space-y-4">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
-                              <input 
-                                type="date"
-                                value={financeForm.date}
-                                onChange={(e) => setFinanceForm({...financeForm, date: e.target.value})}
-                                className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                              />
-                            </div>
-                          </div>
-                          
-                          <div className="grid md:grid-cols-2 gap-6">
-                            <div className="space-y-4">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
-                              <input 
-                                type="text"
-                                value={financeForm.description}
-                                onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
-                                className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                                placeholder="e.g., Membership Fee - Jan 2024"
-                              />
-                            </div>
-                            <div className="space-y-4">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
-                              <select 
-                                value={financeForm.category}
-                                onChange={(e) => setFinanceForm({...financeForm, category: e.target.value})}
-                                className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                              >
-                                <option value="">Select Category</option>
-                                <option value="Membership">Membership Fees</option>
-                                <option value="Sponsorship">Event Sponsorship</option>
-                                <option value="Workshop">Technical Workshops</option>
-                                <option value="Office">Office Maintenance</option>
-                                <option value="Social">Social Activities</option>
-                                <option value="Other">Other</option>
-                              </select>
-                            </div>
-                          </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
+                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                        <div>
+                          <h3 className="font-display font-bold text-xl text-slate-900">Finance Ledger & Accounts</h3>
+                          <p className="text-xs text-slate-500 mt-1">Track association income and expenditures.</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
+                            <div className="text-xl font-display font-bold text-slate-900">
+                              ৳ {financeEntries.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
+                            </div>
+                          </div>
                           <button 
-                            onClick={async () => {
-                              if (!financeForm.amount || !financeForm.description) return alert('Amount and Description are required');
-                              try {
-                                await addDoc(collection(db, 'finances'), {
-                                  ...financeForm,
-                                  recordedBy: user?.displayName || user?.email || 'Admin',
-                                  createdAt: serverTimestamp()
-                                });
-                                setFinanceForm({ type: 'income', amount: 0, description: '', category: '', date: new Date().toISOString().split('T')[0] });
-                                setShowFinanceForm(false);
-                                setSaveStatus({ type: 'success', message: 'Financial entry recorded' });
-                                setTimeout(() => setSaveStatus(null), 3000);
-                              } catch (err) {
-                                handleFirestoreError(err, OperationType.CREATE, 'finances');
-                              }
-                            }}
-                            className="w-full bg-brand-primary text-white px-8 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            onClick={() => setShowFinanceForm(!showFinanceForm)}
+                            className="bg-slate-900 text-white p-3 rounded-xl hover:bg-brand-primary transition-all"
                           >
-                            Record Transaction
+                            {showFinanceForm ? <Minus size={20} /> : <Plus size={20} />}
                           </button>
                         </div>
-                      )}
+                      </div>
 
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recent Transactions</label>
-                          <div className="flex gap-4 text-[10px] font-bold">
-                            <span className="text-green-500">Income: ৳{financeEntries.filter(e => e.type === 'income').reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
-                            <span className="text-red-500">Expenses: ৳{financeEntries.filter(e => e.type === 'expense').reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
-                          </div>
-                        </div>
-                        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
-                          <table className="w-full text-left">
-                            <thead className="bg-slate-50 border-b border-slate-100">
-                              <tr>
-                                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Date & Desc</th>
-                                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Category</th>
-                                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Amount</th>
-                                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                              {financeEntries.map(entry => (
-                                <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
-                                  <td className="px-6 py-4">
-                                    <div className="text-sm font-bold text-slate-900">{entry.description}</div>
-                                    <div className="text-[10px] text-slate-400">{entry.date}</div>
-                                  </td>
-                                  <td className="px-6 py-4">
-                                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{entry.category || 'General'}</span>
-                                  </td>
-                                  <td className={`px-6 py-4 text-sm font-black text-right ${entry.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                    {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
-                                  </td>
-                                  <td className="px-6 py-4 text-center">
-                                    <button 
-                                      onClick={async () => {
-                                        if(confirm('Delete this entry?')) {
-                                          await deleteDoc(doc(db, 'finances', entry.id));
-                                        }
-                                      }}
-                                      className="text-slate-300 hover:text-red-500 transition-colors"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                          {financeEntries.length === 0 && (
-                            <div className="py-20 text-center text-slate-300">
-                              <PieChart size={48} className="mx-auto mb-4 opacity-20" />
-                              <p className="font-bold text-sm">No financial records yet</p>
+                      <div className="p-8 space-y-8">
+                        {showFinanceForm && (
+                          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-6">
+                            <div className="grid md:grid-cols-3 gap-6">
+                              <div className="space-y-4">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Entry Type</label>
+                                <div className="flex gap-2 p-1 bg-white rounded-xl border border-slate-200">
+                                  <button 
+                                    onClick={() => setFinanceForm({...financeForm, type: 'income'})}
+                                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'income' ? 'bg-green-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                  >
+                                    Income
+                                  </button>
+                                  <button 
+                                    onClick={() => setFinanceForm({...financeForm, type: 'expense'})}
+                                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'expense' ? 'bg-red-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                  >
+                                    Expense
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="space-y-4">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Amount (৳)</label>
+                                <input 
+                                  type="number"
+                                  value={financeForm.amount || ''}
+                                  onChange={(e) => setFinanceForm({...financeForm, amount: parseFloat(e.target.value) || 0})}
+                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                  placeholder="0.00"
+                                />
+                              </div>
+                              <div className="space-y-4">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
+                                <input 
+                                  type="date"
+                                  value={financeForm.date}
+                                  onChange={(e) => setFinanceForm({...financeForm, date: e.target.value})}
+                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                />
+                              </div>
                             </div>
-                          )}
+                            
+                            <div className="grid md:grid-cols-2 gap-6">
+                              <div className="space-y-4">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
+                                <input 
+                                  type="text"
+                                  value={financeForm.description}
+                                  onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
+                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                  placeholder="e.g., Membership Fee - Jan 2024"
+                                />
+                              </div>
+                              <div className="space-y-4">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
+                                <select 
+                                  value={financeForm.category}
+                                  onChange={(e) => setFinanceForm({...financeForm, category: e.target.value})}
+                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                >
+                                  <option value="">Select Category</option>
+                                  <option value="Membership">Membership Fees</option>
+                                  <option value="Sponsorship">Event Sponsorship</option>
+                                  <option value="Workshop">Technical Workshops</option>
+                                  <option value="Office">Office Maintenance</option>
+                                  <option value="Social">Social Activities</option>
+                                  <option value="Other">Other</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <button 
+                              onClick={async () => {
+                                if (!financeForm.amount || !financeForm.description) return alert('Amount and Description are required');
+                                try {
+                                  await addDoc(collection(db, 'finances'), {
+                                    ...financeForm,
+                                    recordedBy: user?.displayName || user?.email || 'Admin',
+                                    createdAt: serverTimestamp()
+                                  });
+                                  setFinanceForm({ type: 'income', amount: 0, description: '', category: '', date: new Date().toISOString().split('T')[0] });
+                                  setShowFinanceForm(false);
+                                  setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Financial entry recorded' });
+                                  setTimeout(() => setSaveStatus(null), 3000);
+                                } catch (err) {
+                                  handleFirestoreError(err, OperationType.CREATE, 'finances');
+                                }
+                              }}
+                              className="w-full bg-brand-primary text-white px-8 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            >
+                              Record Transaction
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recent Transactions</label>
+                            <div className="flex gap-4 text-[10px] font-bold">
+                              <span className="text-green-500">Income: ৳{financeEntries.filter(e => e.type === 'income').reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
+                              <span className="text-red-500">Expenses: ৳{financeEntries.filter(e => e.type === 'expense').reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+                            <table className="w-full text-left">
+                              <thead className="bg-slate-50 border-b border-slate-100">
+                                <tr>
+                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Date & Desc</th>
+                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Category</th>
+                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Amount</th>
+                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {financeEntries.map(entry => (
+                                  <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="px-6 py-4">
+                                      <div className="text-sm font-bold text-slate-900">{entry.description}</div>
+                                      <div className="text-[10px] text-slate-400">{entry.date}</div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{entry.category || 'General'}</span>
+                                    </td>
+                                    <td className={`px-6 py-4 text-sm font-black text-right ${entry.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                                      {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
+                                    </td>
+                                    <td className="px-6 py-4 text-center">
+                                      <button 
+                                        onClick={async () => {
+                                          if(confirm('Delete this entry?')) {
+                                            await deleteDoc(doc(db, 'finances', entry.id));
+                                          }
+                                        }}
+                                        className="text-slate-300 hover:text-red-500 transition-colors"
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {financeEntries.length === 0 && (
+                              <div className="py-20 text-center text-slate-300">
+                                <PieChart size={48} className="mx-auto mb-4 opacity-20" />
+                                <p className="font-bold text-sm">No financial records yet</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -4296,6 +4592,204 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                ) : adminTab === 'membership-config' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-8 border-b border-slate-50">
+                      <h3 className="font-display font-bold text-xl text-slate-900 italic">Membership Payment Settings</h3>
+                      <p className="text-slate-500 text-sm mt-1">Configure bKash/Nagad details and registration amount.</p>
+                    </div>
+                    <div className="p-8 space-y-6">
+                      <div className="grid md:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">bKash Number (Personal)</label>
+                          <input 
+                            type="text"
+                            value={membershipSettings?.bkashNumber || ''}
+                            onChange={(e) => setMembershipSettings({...membershipSettings, bkashNumber: e.target.value})}
+                            className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                          />
+                        </div>
+                        <div className="space-y-4">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Nagad Number (Personal)</label>
+                          <input 
+                            type="text"
+                            value={membershipSettings?.nagadNumber || ''}
+                            onChange={(e) => setMembershipSettings({...membershipSettings, nagadNumber: e.target.value})}
+                            className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Membership Fee (BDT)</label>
+                        <input 
+                          type="number"
+                          value={membershipSettings?.membershipAmount || 100}
+                          onChange={(e) => setMembershipSettings({...membershipSettings, membershipAmount: parseInt(e.target.value) || 0})}
+                          className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                        />
+                      </div>
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Payment Instructions / Info Message</label>
+                        <textarea 
+                          value={membershipSettings?.paymentInstructions || ''}
+                          onChange={(e) => setMembershipSettings({...membershipSettings, paymentInstructions: e.target.value})}
+                          className="w-full h-32 px-5 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-medium leading-relaxed"
+                          placeholder="e.g. Send money then submit transaction ID here..."
+                        />
+                      </div>
+                      <button 
+                        onClick={() => handleUpdateMembershipSettings(membershipSettings)}
+                        disabled={savingMembershipSettings}
+                        className="w-full bg-brand-primary text-white py-4 rounded-xl font-bold uppercase tracking-widest hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-2"
+                      >
+                        {savingMembershipSettings ? <Loader2 className="animate-spin" /> : <Save size={18} />}
+                        Save Membership Settings
+                      </button>
+                    </div>
+                  </div>
+                ) : adminTab === 'approvals' ? (
+                  <div className="space-y-6">
+                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8">
+                       <div className="flex items-center justify-between border-b border-slate-50 pb-4 mb-6">
+                         <h3 className="font-display font-bold text-xl text-slate-900">
+                          {specializedRole === 'finance' ? 'Pending Payment Approvals (Finance)' : 
+                           specializedRole === 'secretary' ? 'Pending Membership Approvals (Secretary)' : 
+                           'Association User Management'}
+                         </h3>
+                         <div className="flex gap-2">
+                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+                             Total: {allUsers.length}
+                           </span>
+                           <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded-md border border-amber-100">
+                             Queue: {allUsers.filter(u => {
+                               if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance';
+                               if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary';
+                               return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
+                             }).length}
+                           </span>
+                         </div>
+                       </div>
+
+                       {/* Approval Queue */}
+                       {(specializedRole === 'finance' || specializedRole === 'secretary') && (
+                         <div className="space-y-6">
+                           <div className="grid gap-4">
+                             {allUsers
+                               .filter(u => {
+                                 if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
+                                 if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
+                                 return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
+                               })
+                               .map(m => (
+                               <div key={m.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                 <div>
+                                   <div className="flex items-center gap-3 mb-2">
+                                     <h4 className="font-bold text-slate-900">{m.name}</h4>
+                                     <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${
+                                       (m.membershipStatus || '').includes('declined') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+                                     }`}>
+                                       {(m.membershipStatus || 'unpaid').replace('_', ' ')}
+                                     </span>
+                                   </div>
+                                   <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                                     <span className="text-slate-400">Method: <span className="text-slate-600 font-bold uppercase">{m.paymentMethod}</span></span>
+                                     <span className="text-slate-400">TXID: <span className="text-slate-600 font-mono font-bold">{m.transactionId}</span></span>
+                                     <span className="text-slate-400">Amount: <span className="text-slate-600 font-bold">৳{m.paymentAmount}</span></span>
+                                     <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{new Date(m.paymentSubmittedAt).toLocaleDateString()}</span></span>
+                                   </div>
+                                 </div>
+                                 <div className="flex items-center gap-3">
+                                   <button 
+                                     onClick={() => updateUserStatus(m.id, specializedRole === 'finance' ? 'pending_secretary' : 'approved')}
+                                     className="px-6 py-2 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all flex items-center gap-2"
+                                   >
+                                     <Check size={14} strokeWidth={3} /> Approve
+                                   </button>
+                                   <button 
+                                     onClick={() => updateUserStatus(m.id, specializedRole === 'finance' ? 'declined_finance' : 'declined_secretary')}
+                                     className="px-6 py-2 bg-white border border-red-200 text-red-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-all flex items-center gap-2"
+                                   >
+                                     <X size={14} strokeWidth={3} /> Decline
+                                   </button>
+                                 </div>
+                               </div>
+                             ))}
+                             {allUsers.filter(u => {
+                               if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
+                               if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
+                               return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
+                             }).length === 0 && (
+                               <div className="py-12 text-center text-slate-300 italic text-sm">
+                                 No pending approval requests in the queue.
+                               </div>
+                             )}
+                           </div>
+                         </div>
+                       )}
+
+                       {/* Full User List for Admin */}
+                       {isAdmin && (
+                         <div className="mt-12 pt-12 border-t border-slate-100">
+                           <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-6 flex items-center gap-2">
+                             <Users size={14} /> Global User Registrar
+                           </h4>
+                           <div className="overflow-hidden rounded-2xl border border-slate-100">
+                             <table className="w-full text-left text-[11px]">
+                               <thead className="bg-slate-50 border-b border-slate-100">
+                                 <tr>
+                                   <th className="px-6 py-4 font-black uppercase tracking-widest text-slate-400">User / Identity</th>
+                                   <th className="px-6 py-4 font-black uppercase tracking-widest text-slate-400">Membership Status</th>
+                                   <th className="px-6 py-4 font-black uppercase tracking-widest text-slate-400">Workflow Stage</th>
+                                   <th className="px-6 py-4 font-black uppercase tracking-widest text-slate-400 text-right">Action</th>
+                                 </tr>
+                               </thead>
+                               <tbody className="divide-y divide-slate-50">
+                                 {allUsers.map(u => (
+                                   <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                                     <td className="px-6 py-4">
+                                       <div className="font-bold text-slate-900">{u.name || 'Anonymous'}</div>
+                                       <div className="text-slate-400 font-medium">{u.email}</div>
+                                     </td>
+                                     <td className="px-6 py-4">
+                                       <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${
+                                         u.membershipStatus === 'approved' ? 'bg-green-100 text-green-600' :
+                                         u.membershipStatus === 'unpaid' ? 'bg-slate-100 text-slate-400' :
+                                         (u.membershipStatus || '').includes('declined') ? 'bg-red-100 text-red-600' :
+                                         'bg-amber-100 text-amber-600'
+                                       }`}>
+                                         {u.membershipStatus === 'unpaid' ? '🔵 Just Registered' : 
+                                          u.membershipStatus === 'approved' ? '🟢 Full Member' : 
+                                          (u.membershipStatus || '').includes('declined') ? '🔴 Declined' : 
+                                          u.membershipStatus === 'pending_finance' ? '🟡 Pending Finance' : '🟠 Pending Secretary'}
+                                       </span>
+                                     </td>
+                                     <td className="px-6 py-4">
+                                       <div className="flex items-center gap-1">
+                                          {[1, 2, 3].map(i => {
+                                            const isActive = (i === 1 && ['pending_finance', 'pending_secretary', 'approved', 'declined_finance', 'declined_secretary'].includes(u.membershipStatus)) ||
+                                                             (i === 2 && ['pending_secretary', 'approved', 'declined_secretary'].includes(u.membershipStatus)) ||
+                                                             (i === 3 && u.membershipStatus === 'approved');
+                                            return <div key={i} className={`h-1.5 w-6 rounded-full ${isActive ? 'bg-brand-primary' : 'bg-slate-100'}`} />;
+                                          })}
+                                       </div>
+                                     </td>
+                                     <td className="px-6 py-4 text-right">
+                                       <button 
+                                         onClick={() => updateUserStatus(u.id, u.membershipStatus === 'approved' ? 'unpaid' : 'approved')}
+                                         className="text-brand-primary hover:underline font-bold"
+                                       >
+                                         {u.membershipStatus === 'approved' ? 'Revoke' : 'Force Approve'}
+                                       </button>
+                                     </td>
+                                   </tr>
+                                 ))}
+                               </tbody>
+                             </table>
+                           </div>
+                         </div>
+                       )}
+                    </div>
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -4613,11 +5107,16 @@ export default function App() {
                   >
                     <div className="relative aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-100">
                       <img 
-                        src={member.image} 
+                        src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
                         alt={member.name} 
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-brand-primary/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                      {member.bloodGroup && (
+                        <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
+                          {member.bloodGroup}
+                        </div>
+                      )}
                     </div>
 
                     <div className="px-2 pb-3 flex flex-col items-center text-center">
@@ -4625,10 +5124,10 @@ export default function App() {
                         {member.name}
                       </h3>
                       <div className="text-slate-500 text-[10px] mb-2 line-clamp-1 font-medium">
-                        {member.institution}
+                        {member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}
                       </div>
                       <div className="inline-flex items-center justify-center px-3 py-0.5 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter">
-                        Session: {member.session}
+                        Session: {member.session || 'N/A'}
                       </div>
                     </div>
                   </motion.div>

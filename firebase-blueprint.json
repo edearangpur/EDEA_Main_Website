@@ -169,6 +169,15 @@
         "name": { "type": "string" },
         "email": { "type": "string" },
         "role": { "type": "string", "enum": ["member_candidate", "member", "admin"] },
+        "membershipStatus": { 
+          "type": "string", 
+          "enum": ["unpaid", "pending_finance", "declined_finance", "pending_secretary", "declined_secretary", "approved"],
+          "description": "Current status in the membership approval workflow"
+        },
+        "transactionId": { "type": "string" },
+        "paymentMethod": { "type": "string", "enum": ["bkash", "nagad"] },
+        "paymentAmount": { "type": "number" },
+        "paymentSubmittedAt": { "type": "string", "format": "date-time" },
         "isVerified": { "type": "boolean" },
         "session": { "type": "string", "description": "Academic or professional session" },
         "shift": { "type": "string", "description": "Work or study shift" },
@@ -179,9 +188,25 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["email", "role", "isVerified"]
+    },
+    "membershipSettings": {
+      "title": "Membership Settings",
+      "description": "Configuration for membership payment and workflow",
+      "type": "object",
+      "properties": {
+        "bkashNumber": { "type": "string" },
+        "nagadNumber": { "type": "string" },
+        "membershipAmount": { "type": "number" },
+        "paymentInstructions": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
+    "config/membership": {
+      "schema": "membershipSettings",
+      "description": "Single document for membership payment settings"
+    },
     "config/association": {
       "schema": "associationConfig",
       "description": "Single document for association mission and vision"

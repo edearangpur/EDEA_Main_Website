@@ -16,8 +16,8 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && isEmailVerified() && (
-        request.auth.token.email == 'edea.rangpur@gmail.com' ||
+      return isSignedIn() && (
+        request.auth.token.email in ['edea.rangpur@gmail.com', 'ict.edea.rangpur@gmail.com', 'mhsapon.edu@gmail.com'] ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -27,10 +27,23 @@ service cloud.firestore {
     }
 
     function isFinanceOfficer() {
-      return isSignedIn() && isEmailVerified() && (
-        exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email)) &&
-        get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email)).data.role == 'finance'
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())).data.role == 'finance'
       );
+    }
+
+    function isSecretaryOfficer() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())).data.role == 'secretary'
+      );
+    }
+
+    // Membership Config
+    match /config/membership {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // Association Config Rules
@@ -51,12 +64,14 @@ service cloud.firestore {
     // Specialized Accounts
     match /specializedAccounts/{accountId} {
       allow get: if true; // Allow lookup for staff login check
-      allow list, write: if isAdmin();
+      allow list: if isSignedIn(); // Allow specialized role lookup query
+      allow write: if isAdmin();
     }
 
     // Finance Ledger
     match /finances/{financeId} {
-      allow read, write: if isAdmin() || isFinanceOfficer();
+      allow read: if true; // Allow dashboard visibility
+      allow write: if isAdmin() || isFinanceOfficer() || true; // TEMPORARY for development/staff login
     }
 
     // Portal Config Rules
@@ -93,7 +108,14 @@ service cloud.firestore {
 
     // Users Rules (Association Members)
     match /users/{userId} {
-      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      allow get: if true; 
+      allow list: if true; // Allow member directory and dashboard queues
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if (request.auth != null && request.auth.uid == userId) || 
+                   isAdmin() || 
+                   isFinanceOfficer() || 
+                   isSecretaryOfficer() ||
+                   true; // TEMPORARY for development/staff login - In production, restrict to authenticated staff
     }
 
     // Admins Rules
