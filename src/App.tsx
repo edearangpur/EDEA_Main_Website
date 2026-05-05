@@ -853,20 +853,24 @@ export default function App() {
       }
     });
 
-    // All Users Listener (for management/approvals)
+    // All Users Listener (for management/approvals and directory)
     let unsubscribeAllUsers: (() => void) | null = null;
-    if (isAdmin || specializedRole === 'finance' || specializedRole === 'secretary') {
-      unsubscribeAllUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-        setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-      }, (error) => {
-        if (error?.message && !error.message.includes('Unexpected state')) {
-          // Silently handle if permissions changed
-          if (!error.message.includes('permission')) {
-            handleFirestoreError(error, OperationType.GET, 'users');
-          }
+    const usersCollection = collection(db, 'users');
+    // If Admin/Staff, get everything. Else get only approved for Directory.
+    const usersQuery = (isAdmin || specializedRole === 'finance' || specializedRole === 'secretary')
+      ? query(usersCollection)
+      : query(usersCollection, where('membershipStatus', '==', 'approved'));
+
+    unsubscribeAllUsers = onSnapshot(usersQuery, (snapshot) => {
+      setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      if (error?.message && !error.message.includes('Unexpected state')) {
+        // Silently handle if permissions changed
+        if (!error.message.includes('permission')) {
+          handleFirestoreError(error, OperationType.GET, 'users');
         }
-      });
-    }
+      }
+    });
 
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
@@ -1901,14 +1905,14 @@ export default function App() {
 
           <div 
             id="members-scroll"
-            className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide snap-x"
+            className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide snap-x"
             style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
           >
-            {allUsers.filter(u => u.membershipStatus === 'approved').slice(0, 6).map((member) => (
+            {allUsers.filter(u => u.membershipStatus === 'approved').slice(0, 10).map((member) => (
               <motion.div
                 key={member.id}
                 whileHover={{ y: -5 }}
-                className="min-w-[200px] bg-white rounded-2xl border-b-4 border-brand-secondary/20 hover:border-brand-secondary p-2 shadow-sm group snap-start transition-all"
+                className="min-w-[160px] md:min-w-[170px] bg-white rounded-2xl border-b-4 border-brand-primary/20 hover:border-brand-primary p-2 shadow-sm group snap-start transition-all"
               >
                 <div className="relative aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-50">
                   <img 
@@ -1916,7 +1920,7 @@ export default function App() {
                     alt={member.name} 
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-brand-secondary/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-brand-primary/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                   {member.bloodGroup && (
                     <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
                       {member.bloodGroup}
@@ -1924,16 +1928,16 @@ export default function App() {
                   )}
                 </div>
                 <div className="px-2 pb-2 text-center">
-                  <h3 className="font-display font-bold text-xs text-slate-900 mb-0.5 truncate">{member.name}</h3>
-                  <div className="text-slate-400 text-[9px] mb-2 truncate font-medium">{member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}</div>
-                  <div className="inline-block px-2 py-0.5 bg-brand-secondary/10 text-brand-secondary rounded-full text-[8px] font-black uppercase tracking-tighter">Session: {member.session || 'N/A'}</div>
+                  <h3 className="font-display font-bold text-[13px] text-slate-900 mb-0.5 truncate leading-tight">{member.name}</h3>
+                  <div className="text-slate-500 text-[10px] mb-2 truncate font-medium">{member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}</div>
+                  <div className="inline-block px-2.5 py-1 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter">Session: {member.session || 'N/A'}</div>
                 </div>
               </motion.div>
             ))}
             
             {allUsers.filter(u => u.membershipStatus === 'approved').length === 0 && (
               [...Array(6)].map((_, i) => (
-                <div key={i} className="min-w-[200px] bg-slate-50 rounded-2xl p-2 animate-pulse border border-slate-100">
+                <div key={i} className="min-w-[160px] md:min-w-[170px] bg-slate-50 rounded-2xl p-2 animate-pulse border border-slate-100">
                   <div className="aspect-[3/4] bg-slate-200 rounded-xl mb-3" />
                   <div className="h-3 w-3/4 bg-slate-200 rounded mx-auto mb-2" />
                   <div className="h-2 w-1/2 bg-slate-200 rounded mx-auto" />
