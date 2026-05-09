@@ -17,6 +17,19 @@
           "type": "string",
           "description": "Information about the association"
         },
+        "memberCountMode": {
+          "type": "string",
+          "enum": ["realtime", "manual"],
+          "description": "How the member count is displayed on homepage"
+        },
+        "manualMemberCount": {
+          "type": "number",
+          "description": "The specific number of members to show if in manual mode"
+        },
+        "lastMemberSerial": {
+          "type": "number",
+          "description": "The last assigned sequential member ID number"
+        },
         "categories": {
           "type": "array",
           "items": { "type": "string" },
@@ -111,11 +124,31 @@
         "secretaryPhone": { "type": "string" },
         "secretaryEmail": { "type": "string" },
         "secretaryImage": { "type": "string" },
+        "ecCoverPhoto": { "type": "string", "description": "Cover photo for the Executive Committee section" },
         "description": { "type": "string" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
       "required": ["title", "secretaryName", "secretaryRole", "secretaryInstitution", "secretaryPhone", "secretaryEmail", "secretaryImage", "description", "updatedAt", "updatedBy"]
+    },
+    "executiveMember": {
+      "title": "Executive Committee Member",
+      "description": "Members assigned to the Executive Committee",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "description": "The position title in the committee (e.g. President)" },
+        "designation": { "type": "string", "description": "Professional job title" },
+        "institution": { "type": "string" },
+        "session": { "type": "string" },
+        "image": { "type": "string" },
+        "phone": { "type": "string" },
+        "order": { "type": "number" },
+        "addedAt": { "type": "string", "format": "date-time" },
+        "addedBy": { "type": "string" }
+      },
+      "required": ["userId", "name", "role", "order"]
     },
     "specializedAccount": {
       "title": "Specialized Account",
@@ -182,12 +215,23 @@
         "session": { "type": "string", "description": "Academic or professional session" },
         "shift": { "type": "string", "description": "Work or study shift" },
         "bloodGroup": { "type": "string", "description": "Member's blood group" },
+        "phone": { "type": "string", "description": "Optional contact number" },
         "companyName": { "type": "string", "description": "Current employer or company" },
         "profilePicture": { "type": "string", "description": "URL to the member's profile picture" },
+        "memberCode": { "type": "string", "description": "Unique sequential membership ID (e.g., EDEA-1)" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["email", "role", "isVerified"]
+    },
+    "memberIdCounter": {
+      "title": "Member ID Counter",
+      "description": "Stores the current sequential number for member IDs",
+      "type": "object",
+      "properties": {
+        "current": { "type": "number", "description": "The current highest serial number assigned" }
+      },
+      "required": ["current"]
     },
     "membershipSettings": {
       "title": "Membership Settings",
@@ -200,6 +244,53 @@
         "paymentInstructions": { "type": "string" },
         "updatedAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "feeStructure": {
+      "title": "Fee Structure",
+      "description": "Recurring fees for executive members",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "frequency": { "type": "number" },
+        "terms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timeline": { "type": "string" },
+              "lastDate": {
+                "type": "object",
+                "properties": {
+                  "day": { "type": "number" },
+                  "month": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      }
+    },
+    "paymentSubmission": {
+      "title": "Payment Submission",
+      "description": "Submissions for executive fee payments",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "feeId": { "type": "string" },
+        "feeName": { "type": "string" },
+        "termIndex": { "type": "number" },
+        "year": { "type": "number" },
+        "amount": { "type": "number" },
+        "transactionDetails": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "approvedBy": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -210,6 +301,10 @@
     "config/association": {
       "schema": "associationConfig",
       "description": "Single document for association mission and vision"
+    },
+    "memberIds/counter": {
+      "schema": "memberIdCounter",
+      "description": "Sequential counter for member IDs"
     },
     "config/portal": {
       "schema": "portalConfig",
@@ -235,9 +330,21 @@
       "schema": "notice",
       "description": "Collection of official notices"
     },
+    "fees/{feeId}": {
+      "schema": "feeStructure",
+      "description": "Collection of fee structures"
+    },
+    "paymentSubmissions/{paymentId}": {
+      "schema": "paymentSubmission",
+      "description": "Collection of fee payment submissions"
+    },
     "users/{userId}": {
       "schema": "userProfile",
       "description": "Association Member profiles"
+    },
+    "executiveCommittee/{memberId}": {
+      "schema": "executiveMember",
+      "description": "Collection of members in the executive committee"
     }
   }
 }

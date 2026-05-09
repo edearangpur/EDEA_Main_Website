@@ -16,49 +16,49 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email in ['edea.rangpur@gmail.com', 'ict.edea.rangpur@gmail.com', 'mhsapon.edu@gmail.com'] ||
+      return isSignedIn() && request.auth.token.email != null && (
+        request.auth.token.email.lower() == 'edea.rangpur@gmail.com' ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
     function isFinanceOfficer() {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())) &&
-        get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())).data.role == 'finance'
+      return isSignedIn() && request.auth.token.email != null && (
+        request.auth.token.email.lower() == 'accounts@edea.com.bd' ||
+        (exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())) &&
+         get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())).data.role == 'finance')
       );
     }
 
     function isSecretaryOfficer() {
-      return isSignedIn() && (
+      return isSignedIn() && request.auth.token.email != null && (
         exists(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())) &&
         get(/databases/$(database)/documents/specializedAccounts/$(request.auth.token.email.lower())).data.role == 'secretary'
       );
     }
 
+    function isValidECMember(data) {
+      return data.keys().hasAll(['name', 'role', 'designation', 'institution', 'session', 'image', 'phone', 'userId', 'order', 'addedAt', 'addedBy']) &&
+             data.name is string && data.role is string && data.userId is string;
+    }
+
     // Membership Config
     match /config/membership {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isSignedIn();
     }
 
     // Association Config Rules
     match /config/association {
       allow read: if true; // Publicly readable
-      allow write: if isAdmin() && 
-        request.resource.data.keys().hasAll(['mission', 'vision', 'about', 'categories', 'heroImages', 'updatedAt', 'updatedBy']) &&
-        request.resource.data.keys().size() == 7 &&
-        request.resource.data.mission is string && request.resource.data.mission.size() <= 2000 &&
-        request.resource.data.vision is string && request.resource.data.vision.size() <= 2000 &&
-        request.resource.data.about is string && request.resource.data.about.size() <= 5000 &&
-        request.resource.data.categories is list &&
-        request.resource.data.heroImages is list &&
-        request.resource.data.updatedBy == request.auth.uid &&
-        request.resource.data.updatedAt == request.time;
+      allow write: if isAdmin();
+    }
+
+    // Member ID Counter
+    match /memberIds/counter {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.current == 1;
+      allow update: if isSignedIn() && request.resource.data.current == resource.data.current + 1;
     }
 
     // Specialized Accounts
@@ -78,7 +78,8 @@ service cloud.firestore {
     match /config/portal {
       allow read: if true;
       allow write: if isAdmin() &&
-        request.resource.data.keys().hasAll(['title', 'secretaryName', 'secretaryRole', 'secretaryInstitution', 'secretaryPhone', 'secretaryEmail', 'secretaryImage', 'description', 'updatedAt', 'updatedBy']) &&
+        request.resource.data.keys().hasAll(['title', 'secretaryName', 'secretaryRole', 'secretaryInstitution', 'secretaryPhone', 'secretaryEmail', 'secretaryImage', 'ecCoverPhoto', 'description', 'updatedAt', 'updatedBy']) &&
+        request.resource.data.keys().size() == 11 &&
         request.resource.data.title is string &&
         request.resource.data.updatedBy == request.auth.uid &&
         request.resource.data.updatedAt == request.time;
@@ -116,6 +117,26 @@ service cloud.firestore {
                    isFinanceOfficer() || 
                    isSecretaryOfficer() ||
                    true; // TEMPORARY for development/staff login - In production, restrict to authenticated staff
+    }
+
+    // Executive Committee
+    match /executiveCommittee/{memberId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Fee Structures
+    match /fees/{feeId} {
+      allow read: if true; 
+      allow write: if isAdmin() || isFinanceOfficer() || isSignedIn() || true; 
+    }
+
+    // Payment Submissions
+    match /paymentSubmissions/{paymentId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if isAdmin() || isFinanceOfficer() || true;
+      allow delete: if isAdmin();
     }
 
     // Admins Rules

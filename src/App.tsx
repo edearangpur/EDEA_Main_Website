@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
   Target, 
@@ -18,6 +18,11 @@ import {
   Clock,
   Download,
   Facebook,
+  Twitter,
+  Linkedin,
+  Youtube,
+  Instagram,
+  MessageCircle,
   Maximize2,
   Stethoscope,
   Cpu,
@@ -43,6 +48,10 @@ import {
   Activity,
   Check,
   CreditCard,
+  Briefcase,
+  Building2,
+  GraduationCap,
+  Receipt,
   Image as ImageIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -66,7 +75,8 @@ import {
   query,
   orderBy,
   where,
-  getDocs
+  getDocs,
+  runTransaction
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 
@@ -96,6 +106,23 @@ interface AssociationConfig {
   about: string;
   categories: string[];
   heroImages: string[];
+  memberCountMode?: 'realtime' | 'manual';
+  manualMemberCount?: number;
+  logoUrl?: string;
+  footerDescription?: string;
+  officeAddress?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  privacyPolicy?: string;
+  termsOfService?: string;
+  socialLinks?: {
+    facebook?: string;
+    twitter?: string;
+    linkedin?: string;
+    youtube?: string;
+    instagram?: string;
+    whatsapp?: string;
+  };
 }
 
 interface Notice {
@@ -129,6 +156,34 @@ interface SpecializedAccount {
   createdAt: any;
 }
 
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  memberCode?: string;
+  photoURL?: string;
+  profilePicture?: string;
+  membershipStatus: string;
+  paymentAmount?: number;
+  paymentMethod?: string;
+  paymentSubmittedAt?: any;
+  session?: string;
+  designation?: string;
+  workplace?: string;
+  companyName?: string;
+  institution?: string;
+  bloodGroup?: string;
+  paymentHistory?: {
+    type: string;
+    amount: number;
+    date: string;
+    method: string;
+    transactionId: string;
+    status: string;
+  }[];
+}
+
 interface FinanceEntry {
   id: string;
   type: 'income' | 'expense';
@@ -137,6 +192,41 @@ interface FinanceEntry {
   date: string;
   category: string;
   recordedBy: string;
+}
+
+interface FeeTerm {
+  timeline: string;
+  lastDate: {
+    day: number;
+    month: number;
+  };
+}
+
+interface FeeStructure {
+  id: string;
+  name: string;
+  amount: number;
+  frequency: number;
+  terms: FeeTerm[];
+  createdAt: any;
+  updatedAt: any;
+  updatedBy: string;
+}
+
+interface PaymentSubmission {
+  id: string;
+  userId: string;
+  userName: string;
+  feeId: string;
+  feeName: string;
+  termIndex: number;
+  year: number;
+  amount: number;
+  transactionDetails: string;
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: any;
+  approvedAt?: any;
+  approvedBy?: string;
 }
 
 // Mock Data
@@ -297,16 +387,6 @@ const EXECUTIVE_COMMITTEE = [
   }
 ];
 
-const ICT_SECRETARY = {
-  name: 'Engr. Md. Ashraful Islam',
-  role: 'ICT Secretary',
-  designation: 'Bio-Medical Engineer',
-  institution: 'Zia Heart Foundation',
-  image: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=600',
-  phone: '+880 1719-000000',
-  email: 'ict.edea.rangpur@gmail.com',
-  session: '2011-12'
-};
 
 export default function App() {
   const [currentHeroIndex, setCurrentHeroIndex] = useState(0);
@@ -317,39 +397,6 @@ export default function App() {
   const [sessionFilter, setSessionFilter] = useState('All');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showFullCommittee, setShowFullCommittee] = useState(false);
-
-  const handleStaffLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoggingInStaff(true);
-    setStaffLoginError(null);
-    try {
-      const docRef = doc(db, 'specializedAccounts', staffLoginForm.email.toLowerCase());
-      const snapshot = await getDocFromServer(docRef);
-      
-      if (snapshot.exists()) {
-        const data = snapshot.data() as SpecializedAccount;
-        if (data.password === staffLoginForm.password) {
-          setSpecializedRole(data.role);
-          sessionStorage.setItem('specializedRole', data.role);
-          sessionStorage.setItem('specializedEmail', data.email);
-          setShowStaffLogin(false);
-          if (data.role === 'finance') setAdminTab('finance');
-          else if (data.role === 'admin') setAdminTab('accounts');
-          else if (data.role === 'secretary') setAdminTab('profile');
-          setShowAdminDashboard(true);
-        } else {
-          setStaffLoginError('Invalid password. Please try again.');
-        }
-      } else {
-        setStaffLoginError('Account does not exist.');
-      }
-    } catch (err) {
-      console.error(err);
-      setStaffLoginError('Login failed. Please check your connection.');
-    } finally {
-      setIsLoggingInStaff(false);
-    }
-  };
 
   const handleLogout = async () => {
     try {
@@ -366,6 +413,11 @@ export default function App() {
   const [showNoticesView, setShowNoticesView] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMemberDashboard, setShowMemberDashboard] = useState(false);
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showTermsOfService, setShowTermsOfService] = useState(false);
+  const [memberAnalysisSearch, setMemberAnalysisSearch] = useState('');
+  const [memberAnalysisPaymentFilter, setMemberAnalysisPaymentFilter] = useState('all');
+  const [selectedAnalysisUser, setSelectedAnalysisUser] = useState<UserProfile | null>(null);
   const [noticeSearch, setNoticeSearch] = useState('');
   const [noticeCategoryFilter, setNoticeCategoryFilter] = useState('All');
   const [selectedNoticeImage, setSelectedNoticeImage] = useState<string | null>(null);
@@ -375,7 +427,7 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [membershipSettings, setMembershipSettings] = useState<any>(null);
-  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [savingMembershipSettings, setSavingMembershipSettings] = useState(false);
   const [specializedRole, setSpecializedRole] = useState<'finance' | 'admin' | 'secretary' | null>(() => {
     const saved = sessionStorage.getItem('specializedRole');
@@ -386,7 +438,10 @@ export default function App() {
     vision: 'We envision a future where every medical facility in Rangpur is supported by skilled, empowered, and innovative electromedical professionals, ensuring world-class healthcare technology is accessible to all citizens of Bangladesh.',
     about: 'The premier professional body supporting clinical engineering professionals across Northern Bangladesh. Dedicated to medical excellence, technological innovation, and protecting the interests of the engineers who backbone modern healthcare.',
     categories: ['Technical Workshop', 'Medical Seminar', 'Committee Meeting', 'Social Event', 'Training Program'],
-    heroImages: []
+    heroImages: [],
+    logoUrl: '',
+    privacyPolicy: '',
+    termsOfService: ''
   });
 
   // Auto-slide effect for hero images
@@ -406,19 +461,37 @@ export default function App() {
   const [editMission, setEditMission] = useState('');
   const [editVision, setEditVision] = useState('');
   const [editAbout, setEditAbout] = useState('');
+  const [editMemberCountMode, setEditMemberCountMode] = useState<'realtime' | 'manual'>('realtime');
+  const [editManualMemberCount, setEditManualMemberCount] = useState<number>(0);
   const [editCategories, setEditCategories] = useState<string[]>([]);
   const [editHeroImages, setEditHeroImages] = useState<string[]>([]);
+  const [editLogoUrl, setEditLogoUrl] = useState('');
+  const [editFooterDescription, setEditFooterDescription] = useState('');
+  const [editOfficeAddress, setEditOfficeAddress] = useState('');
+  const [editContactEmail, setEditContactEmail] = useState('');
+  const [editContactPhone, setEditContactPhone] = useState('');
+  const [editPrivacyPolicy, setEditPrivacyPolicy] = useState('');
+  const [editTermsOfService, setEditTermsOfService] = useState('');
+  const [editSocialLinks, setEditSocialLinks] = useState({
+    facebook: '',
+    twitter: '',
+    linkedin: '',
+    youtube: '',
+    instagram: '',
+    whatsapp: ''
+  });
   const [newCategory, setNewCategory] = useState('');
 
   // Portal Settings State
   const [portalConfig, setPortalConfig] = useState({
     title: 'ICT Division & Portal',
-    secretaryName: 'Engr. Md. Ashraful Islam',
+    secretaryName: 'To be assigned',
     secretaryRole: 'ICT Secretary',
-    secretaryInstitution: 'Zia Heart Foundation',
-    secretaryPhone: '+880 1719-000000',
-    secretaryEmail: 'ict.edea.rangpur@gmail.com',
-    secretaryImage: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=600',
+    secretaryInstitution: '',
+    secretaryPhone: '',
+    secretaryEmail: '',
+    secretaryImage: '',
+    ecCoverPhoto: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?auto=format&fit=crop&q=80&w=2000',
     description: 'Encountered a bug or have suggestions for our digital portal? Reach out directly to our ICT Secretary.'
   });
   const [editPortal, setEditPortal] = useState(portalConfig);
@@ -470,9 +543,13 @@ export default function App() {
   // Local Programs State
   const [programs, setPrograms] = useState<Program[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
-  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'profile' | 'notices'>('general');
+  const [executiveMembers, setExecutiveMembers] = useState<any[]>([]);
+  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding'>('general');
   const [isAddingProgram, setIsAddingProgram] = useState(false);
   const [isAddingNotice, setIsAddingNotice] = useState(false);
+  const [ecMemberForm, setEcMemberForm] = useState({ role: '', userId: '' });
+  const [ecMemberSearch, setEcMemberSearch] = useState('');
+  const [isAddingECMember, setIsAddingECMember] = useState(false);
   const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
   const [noticeForm, setNoticeForm] = useState({
     title: '',
@@ -485,6 +562,67 @@ export default function App() {
   
   // Specialized Accounts State
   const [specializedAccounts, setSpecializedAccounts] = useState<SpecializedAccount[]>([]);
+  const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
+  const [paymentSubmissions, setPaymentSubmissions] = useState<PaymentSubmission[]>([]);
+
+  const memberAnalysisProfileHistory = useMemo(() => {
+    if (!selectedAnalysisUser) return [];
+    
+    const userSubmissions = paymentSubmissions.filter(p => p.userId === selectedAnalysisUser.id);
+    
+    const history: any[] = [
+      ...(selectedAnalysisUser.paymentHistory || []),
+    ];
+
+    userSubmissions.forEach(s => {
+      const dateStr = s.submittedAt && s.submittedAt.toDate ? s.submittedAt.toDate().toLocaleDateString('en-GB') : (s.submittedAt ? new Date(s.submittedAt).toLocaleDateString('en-GB') : 'N/A');
+      history.push({
+        type: s.feeName || 'Fee',
+        amount: s.amount,
+        date: dateStr,
+        method: 'Gateway',
+        transactionId: s.id,
+        status: s.status
+      });
+    });
+
+    if (selectedAnalysisUser.paymentAmount) {
+      const dateStr = selectedAnalysisUser.paymentSubmittedAt && selectedAnalysisUser.paymentSubmittedAt.toDate ? selectedAnalysisUser.paymentSubmittedAt.toDate().toLocaleDateString('en-GB') : (selectedAnalysisUser.paymentSubmittedAt ? new Date(selectedAnalysisUser.paymentSubmittedAt).toLocaleDateString('en-GB') : 'N/A');
+      history.push({
+        type: 'Registration',
+        amount: selectedAnalysisUser.paymentAmount,
+        date: dateStr,
+        method: selectedAnalysisUser.paymentMethod || 'N/A',
+        transactionId: 'REG-' + (selectedAnalysisUser.memberCode || selectedAnalysisUser.id.substring(0, 5)),
+        status: selectedAnalysisUser.membershipStatus === 'approved' ? 'confirmed' : 'pending'
+      });
+    }
+
+    // Sort by date (descending)
+    return history.sort((a, b) => {
+      const dateA = new Date(a.date.split('/').reverse().join('-')).getTime();
+      const dateB = new Date(b.date.split('/').reverse().join('-')).getTime();
+      return dateB - dateA;
+    });
+  }, [selectedAnalysisUser, paymentSubmissions]);
+  const [isAddingFee, setIsAddingFee] = useState(false);
+  const [feeForm, setFeeForm] = useState<{
+    name: string;
+    amount: number;
+    frequency: number;
+    terms: FeeTerm[];
+  }>({
+    name: '',
+    amount: 0,
+    frequency: 1,
+    terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }]
+  });
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedFeeForPayment, setSelectedFeeForPayment] = useState<FeeStructure | null>(null);
+  const [paymentForm, setPaymentForm] = useState({
+    transactionDetails: '',
+    selectedTerms: [] as { termIndex: number; year: number }[]
+  });
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [accountForm, setAccountForm] = useState({
     name: '',
@@ -500,6 +638,27 @@ export default function App() {
   const [otpCode, setOtpCode] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
+
+  const generateMemberId = async (): Promise<string> => {
+    try {
+      const counterRef = doc(db, 'memberIds', 'counter');
+      const newMemberCode = await runTransaction(db, async (transaction) => {
+        const counterDoc = await transaction.get(counterRef);
+        let nextSerial = 1;
+        if (counterDoc.exists()) {
+          nextSerial = (counterDoc.data()?.current || 0) + 1;
+          transaction.update(counterRef, { current: nextSerial });
+        } else {
+          transaction.set(counterRef, { current: 1 });
+        }
+        return `EDEA-${nextSerial}`;
+      });
+      return newMemberCode;
+    } catch (err) {
+      console.error("Error generating member ID:", err);
+      throw err;
+    }
+  };
 
   const handleSendOTP = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -538,10 +697,12 @@ export default function App() {
       const userCredential = await createUserWithEmailAndPassword(auth, registerForm.email, registerForm.password);
       const newUser = userCredential.user;
 
-      // Step 3: Initialize profile in Firestore
+      // Step 3: Initialize profile in Firestore with sequential ID
+      const memberCode = await generateMemberId();
       await setDoc(doc(db, 'users', newUser.uid), {
         name: registerForm.name,
         email: registerForm.email,
+        memberCode: memberCode,
         role: 'member_candidate',
         isVerified: true,
         createdAt: new Date().toISOString()
@@ -565,25 +726,39 @@ export default function App() {
     setIsLoggingInStaff(true);
     setStaffLoginError(null);
     try {
-      // First try specialized accounts (legacy/staff)
+      // 1. Try specialized accounts first (to get the role)
       const docRef = doc(db, 'specializedAccounts', staffLoginForm.email.toLowerCase());
       const snapshot = await getDocFromServer(docRef);
       
+      let foundSpecialized = false;
       if (snapshot.exists()) {
         const data = snapshot.data() as SpecializedAccount;
         if (data.password === staffLoginForm.password) {
           setSpecializedRole(data.role);
           sessionStorage.setItem('specializedRole', data.role);
           sessionStorage.setItem('specializedEmail', data.email);
+          foundSpecialized = true;
+          // Don't return! We want to attempt real Auth login too if the user exists there
+        }
+      }
+      
+      // 2. Try standard Firebase Auth for everyone
+      try {
+        const userCred = await signInWithEmailAndPassword(auth, staffLoginForm.email, staffLoginForm.password);
+        setUser(userCred.user);
+        setShowStaffLogin(false);
+        if (foundSpecialized) setShowAdminDashboard(true);
+      } catch (authErr: any) {
+        // If Auth login fails but specialized check succeeded, we still proceed but with null request.auth (risky)
+        // This handles cases where specialized profiles exist only in Firestore
+        if (foundSpecialized) {
+          console.warn("Specialized profile found but standard Auth login failed. Access might be limited by rules.");
           setShowStaffLogin(false);
           setShowAdminDashboard(true);
           return;
         }
+        throw authErr;
       }
-      
-      // If not specialized, try standard Firebase Auth for members
-      await signInWithEmailAndPassword(auth, staffLoginForm.email, staffLoginForm.password);
-      setShowStaffLogin(false);
     } catch (err: any) {
       console.error(err);
       setStaffLoginError('Invalid credentials or account does not exist.');
@@ -608,21 +783,58 @@ export default function App() {
   });
 
   const [savingProfile, setSavingProfile] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ transactionId: '', method: 'bkash' });
+  const [membershipPaymentForm, setMembershipPaymentForm] = useState({ transactionId: '', method: 'bkash' });
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
   const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !paymentForm.transactionId) return;
+    if (!user || !membershipPaymentForm.transactionId) return;
     setSubmittingPayment(true);
     try {
       await updateUserStatus(user.uid, 'pending_finance', {
-        transactionId: paymentForm.transactionId,
-        paymentMethod: paymentForm.method,
+        transactionId: membershipPaymentForm.transactionId,
+        paymentMethod: membershipPaymentForm.method,
         paymentAmount: membershipSettings?.membershipAmount || 100,
         paymentSubmittedAt: new Date().toISOString()
       });
-      setPaymentForm({ transactionId: '', method: 'bkash' });
+      setMembershipPaymentForm({ transactionId: '', method: 'bkash' });
+    } finally {
+      setSubmittingPayment(false);
+    }
+  };
+
+  const handleFeePaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !selectedFeeForPayment || !paymentForm.transactionDetails || paymentForm.selectedTerms.length === 0) {
+      alert('Please select terms and enter transaction details.');
+      return;
+    }
+
+    setSubmittingPayment(true);
+    try {
+      // Create separate submissions for each term to track independently
+      for (const term of paymentForm.selectedTerms) {
+        const submission: Partial<PaymentSubmission> = {
+          userId: user.uid,
+          userName: userProfile?.name || user.displayName || 'Member',
+          feeId: selectedFeeForPayment.id,
+          feeName: selectedFeeForPayment.name,
+          termIndex: term.termIndex,
+          year: term.year,
+          amount: selectedFeeForPayment.amount,
+          transactionDetails: paymentForm.transactionDetails,
+          status: 'pending',
+          submittedAt: serverTimestamp()
+        };
+        await addDoc(collection(db, 'paymentSubmissions'), submission);
+      }
+
+      setShowPaymentModal(false);
+      setPaymentForm({ transactionDetails: '', selectedTerms: [] });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Payment submission received for review.' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'paymentSubmissions');
     } finally {
       setSubmittingPayment(false);
     }
@@ -683,22 +895,32 @@ export default function App() {
             setUserProfile(doc.data());
           } else {
             // Create profile if doesn't exist
-            const data = {
-              name: currentUser.displayName || '',
-              email: currentUser.email || '',
-              role: 'member_candidate',
-              membershipStatus: 'unpaid',
-              isVerified: true,
-              createdAt: new Date().toISOString()
-            };
-            setDoc(userRef, data).then(() => setUserProfile(data));
+            (async () => {
+              try {
+                const memberCode = await generateMemberId();
+                const data = {
+                  name: currentUser.displayName || '',
+                  email: currentUser.email || '',
+                  memberCode: memberCode,
+                  role: 'member_candidate',
+                  membershipStatus: 'unpaid',
+                  isVerified: true,
+                  createdAt: new Date().toISOString()
+                };
+                await setDoc(userRef, data);
+                setUserProfile(data);
+              } catch (err) {
+                console.error("Failed to auto-create profile with ID:", err);
+              }
+            })();
           }
         }, (error) => {
           console.warn("Profile fetch issue:", error);
         });
 
-        // 1. Check Super Admin (Hardcoded or collection)
-        if (currentUser.email === 'edea.rangpur@gmail.com') {
+        // 1. Check Super Admin via email (Matches rules)
+        const adminEmails = ['edea.rangpur@gmail.com'];
+        if (adminEmails.includes(currentUser.email?.toLowerCase() || '')) {
           setIsAdmin(true);
         } else {
           try {
@@ -754,13 +976,33 @@ export default function App() {
           vision: data.vision || associationConfig.vision,
           about: data.about || associationConfig.about,
           categories: data.categories || ['Technical Workshop', 'Medical Seminar', 'Committee Meeting', 'Social Event', 'Training Program'],
-          heroImages: data.heroImages || []
+          heroImages: data.heroImages || [],
+          memberCountMode: data.memberCountMode || 'realtime',
+          manualMemberCount: data.manualMemberCount || 0,
+          logoUrl: data.logoUrl || '',
+          footerDescription: data.footerDescription || 'The leading association for electromedical diploma engineers in the Rangpur region. Dedicated to professional growth and technical excellence.',
+          officeAddress: data.officeAddress || 'Rangpur Medical College Road, Rangpur, Bangladesh',
+          contactEmail: data.contactEmail || 'info@edea-rangpur.org',
+          contactPhone: data.contactPhone || '+880 1234 567890',
+          privacyPolicy: data.privacyPolicy || '',
+          termsOfService: data.termsOfService || '',
+          socialLinks: data.socialLinks || { facebook: '', twitter: '', linkedin: '', youtube: '', instagram: '', whatsapp: '' }
         });
         setEditMission(data.mission || '');
         setEditVision(data.vision || '');
         setEditAbout(data.about || '');
         setEditCategories(data.categories || ['Technical Workshop', 'Medical Seminar', 'Committee Meeting', 'Social Event', 'Training Program']);
         setEditHeroImages(data.heroImages || []);
+        setEditMemberCountMode(data.memberCountMode || 'realtime');
+        setEditManualMemberCount(data.manualMemberCount || 0);
+        setEditLogoUrl(data.logoUrl || '');
+        setEditFooterDescription(data.footerDescription || '');
+        setEditOfficeAddress(data.officeAddress || '');
+        setEditContactEmail(data.contactEmail || '');
+        setEditContactPhone(data.contactPhone || '');
+        setEditPrivacyPolicy(data.privacyPolicy || '');
+        setEditTermsOfService(data.termsOfService || '');
+        setEditSocialLinks(data.socialLinks || { facebook: '', twitter: '', linkedin: '', youtube: '', instagram: '', whatsapp: '' });
       }
     }, (error) => {
       console.warn("Config fetch issue:", error);
@@ -778,6 +1020,7 @@ export default function App() {
           secretaryPhone: data.secretaryPhone || portalConfig.secretaryPhone,
           secretaryEmail: data.secretaryEmail || portalConfig.secretaryEmail,
           secretaryImage: data.secretaryImage || portalConfig.secretaryImage,
+          ecCoverPhoto: data.ecCoverPhoto || portalConfig.ecCoverPhoto,
           description: data.description || portalConfig.description
         };
         setPortalConfig(updatedPortal);
@@ -842,6 +1085,17 @@ export default function App() {
       console.error("Notices fetch issue:", error);
     });
 
+    // Executive Committee Listener
+    const unsubscribeEC = onSnapshot(query(collection(db, 'executiveCommittee'), orderBy('order', 'asc')), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setExecutiveMembers(data);
+    }, (error) => {
+      console.error("Executive Committee fetch issue:", error);
+    });
+
     // Membership Settings Listener
     const unsubscribeMembership = onSnapshot(doc(db, 'config', 'membership'), (doc) => {
       if (doc.exists()) {
@@ -862,7 +1116,7 @@ export default function App() {
       : query(usersCollection, where('membershipStatus', '==', 'approved'));
 
     unsubscribeAllUsers = onSnapshot(usersQuery, (snapshot) => {
-      setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      setAllUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as UserProfile[]);
     }, (error) => {
       if (error?.message && !error.message.includes('Unexpected state')) {
         // Silently handle if permissions changed
@@ -871,6 +1125,30 @@ export default function App() {
         }
       }
     });
+    const unsubscribeFees = onSnapshot(collection(db, 'fees'), (snapshot) => {
+      setFeeStructures(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as FeeStructure[]);
+    }, (error) => {
+      if (!error.message.includes('permission')) {
+        console.error("Fees fetch issue:", error);
+      }
+    });
+
+    const isStaff = isAdmin || specializedRole === 'finance' || specializedRole === 'secretary';
+    const paymentsCollection = collection(db, 'paymentSubmissions');
+    const paymentsQuery = isStaff
+      ? query(paymentsCollection)
+      : (user ? query(paymentsCollection, where('userId', '==', user.uid)) : null);
+
+    let unsubscribePayments = () => {};
+    if (paymentsQuery) {
+      unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
+        setPaymentSubmissions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as PaymentSubmission[]);
+      }, (error) => {
+        if (!error.message.includes('permission')) {
+          console.error("Payments fetch issue:", error);
+        }
+      });
+    }
 
     const programTimer = setInterval(() => {
       setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
@@ -883,12 +1161,15 @@ export default function App() {
       unsubscribePortal();
       unsubscribePrograms();
       unsubscribeNotices();
+      unsubscribeEC();
       unsubscribeAccounts?.();
       unsubscribeFinances?.();
       unsubscribeMembership();
       unsubscribeAllUsers?.();
+      unsubscribeFees();
+      unsubscribePayments();
     };
-  }, [programs.length, isAdmin, specializedRole]);
+  }, [programs.length, isAdmin, specializedRole, user?.uid]);
 
   const handleUpdateMembershipSettings = async (data: any) => {
     setSavingMembershipSettings(true);
@@ -933,7 +1214,9 @@ export default function App() {
 
   const filteredMembers = allUsers.filter(m => m.membershipStatus === 'approved').filter(m => {
     const matchesSearch = (m.name || '').toLowerCase().includes(memberSearch.toLowerCase()) ||
-                         (m.companyName || '').toLowerCase().includes(memberSearch.toLowerCase());
+                         (m.companyName || '').toLowerCase().includes(memberSearch.toLowerCase()) ||
+                         (m.memberCode || '').toLowerCase().includes(memberSearch.toLowerCase()) ||
+                         (m.phone || '').includes(memberSearch);
     const matchesSession = sessionFilter === 'All' || m.session === sessionFilter;
     return matchesSearch && matchesSession;
   });
@@ -1032,6 +1315,9 @@ export default function App() {
         about: editAbout,
         categories: editCategories,
         heroImages: editHeroImages,
+        memberCountMode: editMemberCountMode,
+        manualMemberCount: editManualMemberCount,
+        logoUrl: editLogoUrl,
         updatedAt: serverTimestamp(),
         updatedBy: user.uid
       });
@@ -1043,20 +1329,185 @@ export default function App() {
     }
   };
 
+  const handleSaveFee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const feeData: Partial<FeeStructure> = {
+        ...feeForm,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid || 'Unknown'
+      };
+      await addDoc(collection(db, 'fees'), feeData);
+      setIsAddingFee(false);
+      setFeeForm({ name: '', amount: 0, frequency: 1, terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }] });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Fee structure added successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'fees');
+    }
+  };
+
+  const handleDeleteFee = async (id: string) => {
+    if (!confirm('Are you sure? This will delete the fee structure.')) return;
+    try {
+      await deleteDoc(doc(db, 'fees', id));
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Fee deleted.' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'fees');
+    }
+  };
+
+  const handleApprovePayment = async (payment: PaymentSubmission) => {
+    try {
+      await updateDoc(doc(db, 'paymentSubmissions', payment.id), {
+        status: 'approved',
+        approvedAt: serverTimestamp(),
+        approvedBy: user?.uid || 'Unknown'
+      });
+      
+      // Also add to finance ledger
+      await addDoc(collection(db, 'finances'), {
+        type: 'income',
+        amount: payment.amount,
+        description: `Fee Payment: ${payment.userName} (${payment.feeName} - Term ${payment.termIndex + 1}, ${payment.year})`,
+        date: new Date().toISOString().split('T')[0],
+        category: 'Member Fees',
+        recordedBy: user?.uid || 'System'
+      });
+
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Payment approved!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'paymentSubmissions');
+    }
+  };
+
+  const handleRejectPayment = async (id: string) => {
+    if (!confirm('Reject this payment?')) return;
+    try {
+      await updateDoc(doc(db, 'paymentSubmissions', id), {
+        status: 'rejected',
+        updatedAt: serverTimestamp()
+      });
+      setSaveStatus({ id: Date.now().toString(), type: 'error', message: 'Payment rejected.' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'paymentSubmissions');
+    }
+  };
+
+  const handleSaveBranding = async () => {
+    if (!user || !isAdmin) return;
+    const path = 'config/association';
+    try {
+      await setDoc(doc(db, 'config', 'association'), {
+        ...associationConfig,
+        logoUrl: editLogoUrl,
+        footerDescription: editFooterDescription,
+        officeAddress: editOfficeAddress,
+        contactEmail: editContactEmail,
+        contactPhone: editContactPhone,
+        privacyPolicy: editPrivacyPolicy,
+        termsOfService: editTermsOfService,
+        socialLinks: editSocialLinks,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid
+      });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Branding & Footer updated successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
   const handleSavePortal = async () => {
     if (!user || !isAdmin) return;
     
     const path = 'config/portal';
     try {
+      // Save Portal Config
       await setDoc(doc(db, 'config', 'portal'), {
         ...editPortal,
         updatedAt: serverTimestamp(),
         updatedBy: user.uid
       });
-      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Portal settings updated successfully!' });
+      
+      // Save Member Count to Association Config
+      await setDoc(doc(db, 'config', 'association'), {
+        ...associationConfig,
+        memberCountMode: editMemberCountMode,
+        manualMemberCount: editManualMemberCount,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid
+      });
+
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Committee and membership settings updated!' });
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
+  const handleAddECMember = async () => {
+    if (!user || !isAdmin) return;
+    if (!ecMemberForm.role || !ecMemberForm.userId) {
+      alert('Please fill in both designation and member fields.');
+      return;
+    }
+
+    const selectedUser = allUsers.find(u => u.id === ecMemberForm.userId);
+    if (!selectedUser) return;
+
+    // Check if member already exists in committee
+    if (executiveMembers.some(m => m.userId === selectedUser.id)) {
+      alert('This member is already in the Executive Committee. Each person can only hold one position.');
+      return;
+    }
+
+    const path = `executiveCommittee/${selectedUser.id}`;
+    try {
+      await setDoc(doc(db, 'executiveCommittee', selectedUser.id), {
+        name: selectedUser.name,
+        role: ecMemberForm.role, // This is the designation (President, Secretary etc)
+        designation: selectedUser.designation || 'Member', // Their professional job title
+        institution: selectedUser.companyName || selectedUser.institution || 'N/A',
+        session: selectedUser.session || 'N/A',
+        image: selectedUser.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedUser.id}`,
+        phone: selectedUser.phone || '',
+        userId: selectedUser.id,
+        order: executiveMembers.length + 1,
+        addedAt: serverTimestamp(),
+        addedBy: user.uid
+      });
+      // Sync isExecutive flag to users collection
+      await updateDoc(doc(db, 'users', selectedUser.id), { isExecutive: true });
+      
+      setEcMemberForm({ role: '', userId: '' });
+      setEcMemberSearch('');
+      setIsAddingECMember(false);
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Member added to committee!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
+  const handleRemoveECMember = async (memberId: string) => {
+    if (!user || !isAdmin) return;
+    if (!confirm('Are you sure you want to remove this member from the committee?')) return;
+
+    const path = `executiveCommittee/${memberId}`;
+    try {
+      await deleteDoc(doc(db, 'executiveCommittee', memberId));
+      // Sync isExecutive flag to users collection
+      await updateDoc(doc(db, 'users', memberId), { isExecutive: false });
+      
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Member removed from committee.' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
     }
   };
 
@@ -1149,9 +1600,13 @@ export default function App() {
                 window.scrollTo({ top: 0, behavior: 'smooth' }); 
               }}
             >
-              <div className="bg-brand-primary p-2 rounded-lg">
-                <Cpu className="text-white w-6 h-6" />
-              </div>
+              {associationConfig.logoUrl ? (
+                <img src={associationConfig.logoUrl} alt="Logo" className="h-10 w-auto object-contain" />
+              ) : (
+                <div className="bg-brand-primary p-2 rounded-lg">
+                  <Cpu className="text-white w-6 h-6" />
+                </div>
+              )}
               <span className="font-display font-bold text-xl text-brand-primary hidden sm:block">
                 EDEA RANGPUR
               </span>
@@ -1219,7 +1674,7 @@ export default function App() {
                 }}
                 className="hover:text-brand-primary transition-colors font-medium text-slate-600"
               >
-                Directory
+                Member
               </button>
               <a href="#mission" className="hover:text-brand-primary transition-colors font-medium text-slate-600">Mission & Vision</a>
               <button 
@@ -1421,7 +1876,7 @@ export default function App() {
                   }} 
                   className="block w-full text-left text-slate-600 font-medium"
                 >
-                  Directory
+                  Member
                 </button>
                 
                 {user && (
@@ -1642,10 +2097,88 @@ export default function App() {
                       {associationConfig.about}
                     </p>
                   </div>
-                </div>
+              </div>
 
-                {/* Stats Card - Pushed down for better visual rhythm */}
-                <div className="mt-16 sm:mt-24 lg:mt-32">
+              {/* Hero Social Icons - Brand Colored */}
+              {associationConfig.socialLinks && Object.values(associationConfig.socialLinks).some(link => typeof link === 'string' && link.trim() !== '') && (
+                <div className="mt-16 sm:mt-24 flex flex-wrap gap-4 px-2">
+                  {associationConfig.socialLinks.facebook && typeof associationConfig.socialLinks.facebook === 'string' && associationConfig.socialLinks.facebook.trim() !== '' && (
+                    <motion.a 
+                      whileHover={{ scale: 1.1, rotate: 5 }}
+                      whileTap={{ scale: 0.95 }}
+                      href={associationConfig.socialLinks.facebook} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="w-12 h-12 bg-[#1877F2] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-[#1877F2]/20 border border-white/10 transition-all duration-300"
+                    >
+                      <Facebook size={24} />
+                    </motion.a>
+                  )}
+                  {associationConfig.socialLinks.linkedin && typeof associationConfig.socialLinks.linkedin === 'string' && associationConfig.socialLinks.linkedin.trim() !== '' && (
+                    <motion.a 
+                      whileHover={{ scale: 1.1, rotate: -5 }}
+                      whileTap={{ scale: 0.95 }}
+                      href={associationConfig.socialLinks.linkedin} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="w-12 h-12 bg-[#0A66C2] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-[#0A66C2]/20 border border-white/10 transition-all duration-300"
+                    >
+                      <Linkedin size={24} />
+                    </motion.a>
+                  )}
+                  {associationConfig.socialLinks.twitter && typeof associationConfig.socialLinks.twitter === 'string' && associationConfig.socialLinks.twitter.trim() !== '' && (
+                    <motion.a 
+                      whileHover={{ scale: 1.1, rotate: 12 }}
+                      whileTap={{ scale: 0.95 }}
+                      href={associationConfig.socialLinks.twitter} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="w-12 h-12 bg-black text-white rounded-2xl flex items-center justify-center shadow-lg shadow-black/20 border border-white/10 transition-all duration-300"
+                    >
+                      <Twitter size={24} />
+                    </motion.a>
+                  )}
+                  {associationConfig.socialLinks.instagram && typeof associationConfig.socialLinks.instagram === 'string' && associationConfig.socialLinks.instagram.trim() !== '' && (
+                    <motion.a 
+                      whileHover={{ scale: 1.1, rotate: -12 }}
+                      whileTap={{ scale: 0.95 }}
+                      href={associationConfig.socialLinks.instagram} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="w-12 h-12 bg-gradient-to-tr from-[#f9ce34] via-[#ee2a7b] to-[#6228d7] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-pink-500/20 border border-white/10 transition-all duration-300"
+                    >
+                      <Instagram size={24} />
+                    </motion.a>
+                  )}
+                  {associationConfig.socialLinks.whatsapp && associationConfig.socialLinks.whatsapp.trim() !== '' && (
+                    <motion.a 
+                      whileHover={{ scale: 1.1, rotate: 5 }}
+                      whileTap={{ scale: 0.95 }}
+                      href={associationConfig.socialLinks.whatsapp} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="w-12 h-12 bg-[#25D366] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-[#25D366]/20 border border-white/10 transition-all duration-300"
+                    >
+                      <MessageCircle size={24} />
+                    </motion.a>
+                  )}
+                  {associationConfig.socialLinks.youtube && typeof associationConfig.socialLinks.youtube === 'string' && associationConfig.socialLinks.youtube.trim() !== '' && (
+                    <motion.a 
+                      whileHover={{ scale: 1.1, rotate: -5 }}
+                      whileTap={{ scale: 0.95 }}
+                      href={associationConfig.socialLinks.youtube} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="w-12 h-12 bg-[#FF0000] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-[#FF0000]/20 border border-white/10 transition-all duration-300"
+                    >
+                      <Youtube size={24} />
+                    </motion.a>
+                  )}
+                </div>
+              )}
+
+              {/* Stats Card - Pushed down for better visual rhythm */}
+              <div className="mt-8 lg:mt-12">
                   <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-7 shadow-2xl relative overflow-hidden group">
                     <div className="absolute inset-0 bg-brand-accent/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
                     <div className="flex items-center gap-6 relative z-10">
@@ -1653,9 +2186,19 @@ export default function App() {
                         <Users size={36} />
                       </div>
                       <div className="flex-1">
-                        <div className="text-4xl sm:text-5xl font-black text-white font-display tracking-tight">500+</div>
+                        <div className="text-4xl sm:text-5xl font-black text-white font-display tracking-tight">
+                          {associationConfig.memberCountMode === 'manual' 
+                            ? `${associationConfig.manualMemberCount}${associationConfig.manualMemberCount > 0 ? '+' : ''}`
+                            : `${allUsers.filter(u => u.membershipStatus === 'approved').length}`
+                          }
+                        </div>
                         <div className="text-[10px] sm:text-xs text-brand-accent font-bold uppercase tracking-[0.2em] mb-3">Active Members</div>
                         <button 
+                          onClick={() => {
+                            setAuthMode('register');
+                            setRegisterStep('form');
+                            setShowStaffLogin(true);
+                          }}
                           className="bg-brand-accent hover:bg-white text-brand-primary px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 flex items-center gap-2 shadow-[0_8px_20px_rgba(255,215,0,0.2)]"
                         >
                           <UserPlus size={12} />
@@ -1904,15 +2447,13 @@ export default function App() {
           </div>
 
           <div 
-            id="members-scroll"
-            className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide snap-x"
-            style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
+            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4 md:gap-5"
           >
             {allUsers.filter(u => u.membershipStatus === 'approved').slice(0, 10).map((member) => (
               <motion.div
                 key={member.id}
                 whileHover={{ y: -5 }}
-                className="min-w-[160px] md:min-w-[170px] bg-white rounded-2xl border-b-4 border-brand-primary/20 hover:border-brand-primary p-2 shadow-sm group snap-start transition-all"
+                className="bg-white rounded-2xl border-b-4 border-brand-primary/10 hover:border-brand-primary p-2 shadow-sm group transition-all"
               >
                 <div className="relative aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-50">
                   <img 
@@ -1927,17 +2468,20 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <div className="px-2 pb-2 text-center">
-                  <h3 className="font-display font-bold text-[13px] text-slate-900 mb-0.5 truncate leading-tight">{member.name}</h3>
-                  <div className="text-slate-500 text-[10px] mb-2 truncate font-medium">{member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}</div>
-                  <div className="inline-block px-2.5 py-1 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter">Session: {member.session || 'N/A'}</div>
+                <div className="px-1 pb-2 flex flex-col items-center text-center">
+                  <h3 className="font-display font-bold text-[13px] text-slate-900 mb-0.5 group-hover:text-brand-primary transition-colors line-clamp-1 leading-tight w-full">{member.name}</h3>
+                  <div className="text-slate-500 text-[10px] mb-2 line-clamp-1 font-medium w-full">
+                    {member.designation && <span className="block italic opacity-80 truncate">{member.designation}</span>}
+                    {member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}
+                  </div>
+                  <div className="inline-flex items-center justify-center px-2 py-0.5 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter">Session: {member.session || 'N/A'}</div>
                 </div>
               </motion.div>
             ))}
             
             {allUsers.filter(u => u.membershipStatus === 'approved').length === 0 && (
-              [...Array(6)].map((_, i) => (
-                <div key={i} className="min-w-[160px] md:min-w-[170px] bg-slate-50 rounded-2xl p-2 animate-pulse border border-slate-100">
+              [...Array(5)].map((_, i) => (
+                <div key={i} className="bg-slate-50 rounded-2xl p-2 animate-pulse border border-slate-100">
                   <div className="aspect-[3/4] bg-slate-200 rounded-xl mb-3" />
                   <div className="h-3 w-3/4 bg-slate-200 rounded mx-auto mb-2" />
                   <div className="h-2 w-1/2 bg-slate-200 rounded mx-auto" />
@@ -1947,16 +2491,22 @@ export default function App() {
             
             {/* See More Card */}
             <motion.button
-              whileHover={{ scale: 1.02 }}
-              onClick={() => setShowAllMembers(true)}
-              className="min-w-[240px] bg-slate-900 rounded-3xl flex flex-col items-center justify-center text-center p-8 gap-4 snap-start border border-slate-800"
+              whileHover={{ scale: 1.02, y: -5 }}
+              onClick={() => {
+                setShowAllMembers(true);
+                setShowAllProgramsView(false);
+                setShowFullCommittee(false);
+                setSelectedProgram(null);
+                window.scrollTo({ top: 0, behavior: 'instant' });
+              }}
+              className="bg-slate-900 rounded-2xl flex flex-col items-center justify-center text-center p-4 gap-3 border-b-4 border-slate-800 shadow-sm group transition-all"
             >
-              <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center text-brand-accent">
-                <Users size={32} />
+              <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-brand-accent group-hover:bg-brand-primary group-hover:text-white transition-all">
+                <Users size={20} />
               </div>
-              <div>
-                <div className="text-white font-bold text-xl mb-1">See More</div>
-                <p className="text-slate-400 text-sm">Join our network of 500+ engineers</p>
+              <div className="w-full">
+                <div className="text-white font-bold text-sm mb-0.5">See More</div>
+                <p className="text-slate-500 text-[10px] line-clamp-1">Join our network</p>
               </div>
             </motion.button>
           </div>
@@ -2094,87 +2644,83 @@ export default function App() {
 
         {/* Executive Committee Section */}
         <section id="executive" className="scroll-mt-24">
-          <div className="flex flex-col mb-12">
-            <div className="flex items-center gap-3 mb-3">
+          <div className="flex flex-col mb-8">
+            <div className="flex items-center gap-3 mb-2">
               <div className="h-[1px] w-12 bg-brand-primary" />
-              <span className="text-xs font-bold uppercase tracking-[0.3em] text-brand-primary/60">Leadership</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary/60">Leadership Council</span>
             </div>
-            <h2 className="text-4xl font-display font-medium text-slate-900 mb-2">Executive Committee</h2>
-            <p className="text-slate-500 text-lg">The dedicated leaders guiding our association towards excellence.</p>
+            <h2 className="text-3xl font-display font-bold text-slate-900 mb-1">Executive Committee</h2>
+            <p className="text-slate-500 text-sm font-medium italic">The dedicated leaders guiding our association towards excellence.</p>
           </div>
 
-          {/* Large Group Photo Area */}
+          {/* Large Group Photo Area - Reduced spacing */}
           <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
+            initial={{ opacity: 0, scale: 0.98 }}
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
-            className="mb-20 relative group"
+            className="mb-8 relative group"
           >
             <div className="absolute -inset-4 bg-brand-primary/5 rounded-[3rem] blur-2xl group-hover:bg-brand-primary/10 transition-colors" />
-            <div className="relative aspect-[21/9] w-full rounded-[2.5rem] sm:rounded-[3.5rem] overflow-hidden border-[8px] border-white shadow-2xl">
+            <div className="relative aspect-[21/9] w-full rounded-[2rem] sm:rounded-[3.5rem] overflow-hidden border-[8px] border-white shadow-xl">
               <img 
-                src="https://images.unsplash.com/photo-1543269865-cbf427effbad?auto=format&fit=crop&q=80&w=1600" 
+                src={portalConfig.ecCoverPhoto} 
                 alt="Executive Committee Group" 
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[3000ms]"
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[5000ms]"
               />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-40" />
             </div>
           </motion.div>
 
-          {/* Individual Members - 5 columns and smaller size */}
-          <div className="grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 sm:gap-8">
-            {EXECUTIVE_COMMITTEE.slice(0, 5).map((member, index) => (
+          {/* Individual Members - Rows of 5, optimized design */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6">
+            {executiveMembers.slice(0, 10).map((member, index) => (
               <motion.div
                 key={member.id}
-                initial={{ opacity: 0, y: 30 }}
+                initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
+                transition={{ delay: index * 0.05 }}
                 viewport={{ once: true }}
-                className="relative group"
+                className="group relative bg-white rounded-2xl border border-slate-100 overflow-hidden hover:shadow-xl hover:border-brand-primary/20 transition-all duration-300"
               >
-                <div className="absolute -inset-1 bg-brand-primary/20 rounded-[2.5rem] blur opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                
-                <div className="relative bg-white rounded-[2.5rem] p-3 shadow-lg border border-slate-100 transition-all duration-500 group-hover:shadow-xl h-full flex flex-col">
-                  {/* Photo - Slightly smaller aspect ratio and padding */}
-                  <div className="relative aspect-square rounded-[1.8rem] overflow-hidden mb-4 bg-slate-50 flex items-center justify-center">
-                    {member.image ? (
-                      <img 
-                        src={member.image} 
-                        alt={member.name} 
-                        className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110"
-                      />
-                    ) : (
-                      <Users size={40} className="text-slate-200" />
-                    )}
-                    <div className="absolute inset-0 bg-brand-primary/10 mix-blend-multiply opacity-0 group-hover:opacity-40 transition-opacity" />
-                    
-                    {/* Floating Role Badge - Smaller */}
-                    <div className="absolute top-2 left-2">
-                      <div className="bg-white/95 backdrop-blur-sm px-3 py-1 rounded-lg shadow-lg border border-slate-100">
-                        <span className="text-[8px] font-black text-brand-primary uppercase tracking-[0.1em]">
-                          {member.role}
-                        </span>
-                      </div>
+                <div className="aspect-[4/5] relative overflow-hidden bg-slate-50">
+                  <div className="absolute top-2 left-2 z-10">
+                    <span className="px-2 py-1 bg-brand-primary/90 text-white text-[8px] font-black uppercase tracking-widest rounded-md shadow-sm">
+                      {member.role}
+                    </span>
+                  </div>
+                  {member.image ? (
+                    <img 
+                      src={member.image} 
+                      alt={member.name} 
+                      className="w-full h-full object-cover grayscale-[30%] group-hover:grayscale-0 transition-all duration-500 group-hover:scale-110"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-200">
+                      <Users size={32} />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
+                    <div className="flex gap-2 w-full">
+                       <a href={`tel:${member.phone}`} className="flex-1 bg-white/20 backdrop-blur-md hover:bg-white/40 text-white p-2 rounded-lg flex items-center justify-center">
+                         <Phone size={14} />
+                       </a>
+                       <div className="flex-1 bg-white/20 backdrop-blur-md hover:bg-white/40 text-white p-2 rounded-lg flex items-center justify-center">
+                         <Mail size={14} />
+                       </div>
                     </div>
                   </div>
-
-                  <div className="px-1 pb-2 flex-grow flex flex-col">
-                    <h3 className="text-sm sm:text-base font-display font-bold text-slate-900 mb-1 leading-tight group-hover:text-brand-primary transition-colors line-clamp-1">
-                      {member.name}
-                    </h3>
-                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mb-3">
-                      {member.designation}
+                </div>
+                <div className="p-4 text-center">
+                  <h3 className="font-bold text-slate-900 text-sm mb-0.5 line-clamp-1 group-hover:text-brand-primary transition-colors">{member.name}</h3>
+                  <div className="text-[9px] text-brand-primary font-black uppercase tracking-tight mb-2">
+                    {member.designation}
+                  </div>
+                  <div className="pt-2 border-t border-slate-50 opacity-60 group-hover:opacity-100 transition-opacity">
+                    <div className="text-[9px] text-slate-500 font-medium truncate mb-0.5">
+                      {member.institution}
                     </div>
-                    
-                    <div className="mt-auto pt-3 border-t border-slate-50 flex items-center justify-between">
-                      <div className="text-[9px] text-slate-400 font-medium truncate max-w-[70%]">
-                        {member.institution}
-                      </div>
-                      <a 
-                        href={`tel:${member.phone}`}
-                        className="bg-slate-50 p-1.5 rounded-full text-slate-400 hover:bg-brand-primary hover:text-white transition-all"
-                      >
-                        <Phone size={10} />
-                      </a>
+                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-tighter">
+                      Session: {member.session}
                     </div>
                   </div>
                 </div>
@@ -2182,18 +2728,21 @@ export default function App() {
             ))}
           </div>
 
-          <div className="mt-20 sm:mt-32 flex justify-center">
+          <div className="mt-8 flex justify-center">
             <button 
-              onClick={() => setShowFullCommittee(true)}
-              className="bg-slate-900 text-white px-10 py-5 rounded-[2rem] font-bold text-lg hover:bg-slate-800 transition-all flex items-center gap-3 shadow-xl active:scale-95 group"
+              onClick={() => {
+                setShowFullCommittee(true);
+                window.scrollTo(0, 0);
+              }}
+              className="group flex items-center gap-3 bg-slate-900 text-white px-8 py-3.5 rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-xl hover:bg-brand-primary hover:scale-[1.05] active:scale-95 transition-all"
             >
-              See full Executive Council <ArrowRight className="group-hover:translate-x-2 transition-transform" />
+              See full Executive Council <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </div>
         </section>
 
         {/* ICT Secretary Section - Compact Card */}
-        <section id="ict" className="scroll-mt-24 border-t border-slate-200 pt-16 mb-20">
+        <section id="ict" className="scroll-mt-24 border-t border-slate-200 pt-8 mb-10">
           <div className="flex justify-center">
             <div className="max-w-2xl w-full bg-white rounded-[2rem] border border-slate-200 p-6 sm:p-8 shadow-xl group hover:shadow-2xl transition-all relative overflow-hidden">
               <div className="absolute top-0 right-0 w-24 h-24 bg-brand-primary/5 rounded-bl-[4rem] -mr-8 -mt-8 transition-transform group-hover:scale-110" />
@@ -2257,8 +2806,8 @@ export default function App() {
 
         {/* Full Committee Page View (Integrated) */}
         {showFullCommittee && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12 scroll-mt-20">
-            <div className="flex flex-col sm:flex-row items-center justify-between mb-16 gap-6">
+          <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-2 pb-12 scroll-mt-20">
+            <div className="flex flex-col sm:flex-row items-center justify-between mb-6 gap-6">
               <div className="space-y-4 text-center sm:text-left">
                 <div className="flex items-center gap-2 justify-center sm:justify-start">
                   <div className="h-[2px] w-8 bg-brand-primary" />
@@ -2275,9 +2824,9 @@ export default function App() {
             </div>
 
             {/* Group Photo */}
-            <div className="mb-24 relative rounded-[3rem] sm:rounded-[4rem] overflow-hidden border-[12px] border-white shadow-2xl">
+            <div className="mb-10 relative rounded-[3rem] sm:rounded-[4rem] overflow-hidden border-[12px] border-white shadow-2xl">
               <img 
-                src="https://images.unsplash.com/photo-1543269865-cbf427effbad?auto=format&fit=crop&q=80&w=2000" 
+                src={portalConfig.ecCoverPhoto} 
                 alt="Group Photo" 
                 className="w-full h-[300px] sm:h-[500px] object-cover"
               />
@@ -2285,7 +2834,7 @@ export default function App() {
 
             {/* All Members Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {EXECUTIVE_COMMITTEE.map((member, idx) => (
+              {executiveMembers.map((member, idx) => (
                 <motion.div
                   key={member.id}
                   initial={{ opacity: 0, y: 30 }}
@@ -2706,7 +3255,14 @@ export default function App() {
                 </div>
                 <div>
                   <h1 className="text-3xl font-display font-bold text-slate-900 italic">Member Dashboard</h1>
-                  <p className="text-slate-500 text-sm">Welcome back, {userProfile?.name || user.displayName || 'Member'}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-slate-500 text-sm">Welcome back, {userProfile?.name || user.displayName || 'Member'}</p>
+                    {userProfile?.memberCode && (
+                      <span className="px-2 py-0.5 bg-brand-primary/10 text-brand-primary text-[10px] font-black rounded-lg border border-brand-primary/20">
+                        {userProfile.memberCode}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button 
@@ -2756,7 +3312,17 @@ export default function App() {
                     )}
                   </div>
                   <h3 className="font-bold text-slate-900">{userProfile?.name}</h3>
+                  {userProfile?.memberCode && (
+                    <p className="text-[10px] font-black text-brand-primary uppercase tracking-tighter mt-1 bg-brand-primary/5 py-1 px-2 rounded-lg inline-block">
+                      ID: {userProfile.memberCode}
+                    </p>
+                  )}
                   <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">{userProfile?.role?.replace('_', ' ')}</p>
+                  {userProfile?.phone && (
+                    <div className="mt-2 flex items-center justify-center gap-1.5 text-[10px] text-slate-400 font-bold">
+                      <Phone size={10} /> {userProfile.phone}
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-brand-primary/5 rounded-3xl p-6 border border-brand-primary/10">
@@ -2847,8 +3413,8 @@ export default function App() {
                     <form onSubmit={handleSubmitPayment} className="space-y-4">
                       <div className="grid sm:grid-cols-[120px_1fr] gap-4">
                         <select 
-                          value={paymentForm.method}
-                          onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}
+                          value={membershipPaymentForm.method}
+                          onChange={(e) => setMembershipPaymentForm({ ...membershipPaymentForm, method: e.target.value })}
                           className="bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20"
                         >
                           <option value="bkash">bKash</option>
@@ -2856,8 +3422,8 @@ export default function App() {
                         </select>
                         <input 
                           type="text"
-                          value={paymentForm.transactionId}
-                          onChange={(e) => setPaymentForm({ ...paymentForm, transactionId: e.target.value })}
+                          value={membershipPaymentForm.transactionId}
+                          onChange={(e) => setMembershipPaymentForm({ ...membershipPaymentForm, transactionId: e.target.value })}
                           placeholder="Enter Transaction ID"
                           className="bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
                           required
@@ -2872,6 +3438,141 @@ export default function App() {
                         {submittingPayment && <Loader2 className="animate-spin" />}
                       </button>
                     </form>
+                  </div>
+                )}
+
+                {/* Executive Fees Section */}
+                {executiveMembers.some(m => m.userId === user.uid) && (
+                  <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-brand-primary/10 p-2.5 rounded-xl text-brand-primary">
+                          <CreditCard size={20} />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-slate-900">Executive Fees</h2>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Committee Member Dues</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        Priority Payment Rules Active
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {feeStructures.map(fee => {
+                        const startYear = new Date(fee.createdAt?.toDate?.() || fee.createdAt || Date.now()).getFullYear();
+                        const currentYear = new Date().getFullYear();
+                        const feeYears = [];
+                        for (let y = startYear; y <= currentYear; y++) feeYears.push(y);
+
+                        return (
+                          <div key={fee.id} className="border border-slate-100 rounded-2xl overflow-hidden">
+                            <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-100">
+                              <h3 className="font-bold text-slate-900">{fee.name}</h3>
+                              <span className="text-brand-primary font-bold text-sm">{fee.amount} BDT / term</span>
+                            </div>
+                            <div className="p-4 space-y-2">
+                              {feeYears.map(year => (
+                                <div key={year} className="space-y-2">
+                                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">{year} Cycle</div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {fee.terms.map((term, termIdx) => {
+                                      const submission = paymentSubmissions.find(s => 
+                                        s.userId === user.uid && 
+                                        s.feeId === fee.id && 
+                                        s.year === year && 
+                                        s.termIndex === termIdx
+                                      );
+
+                                      const isPast = year < currentYear || (year === currentYear && new Date().getMonth() + 1 > term.lastDate.month);
+                                      const isOverdue = isPast && (!submission || submission.status !== 'approved');
+
+                                      // Priority Check: Are there any unpaid terms before this one?
+                                      const previousUnpaid = feeYears.some(y => 
+                                        fee.terms.some((t, tIdx) => {
+                                          if (y < year || (y === year && tIdx < termIdx)) {
+                                            const s = paymentSubmissions.find(sub => 
+                                              sub.userId === user.uid && 
+                                              sub.feeId === fee.id && 
+                                              sub.year === y && 
+                                              sub.termIndex === tIdx
+                                            );
+                                            return !s || s.status !== 'approved';
+                                          }
+                                          return false;
+                                        })
+                                      );
+
+                                      return (
+                                        <div 
+                                          key={termIdx} 
+                                          className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                                            submission?.status === 'approved' ? 'bg-green-50 border-green-100' :
+                                            submission?.status === 'pending' ? 'bg-amber-50 border-amber-100' :
+                                            isOverdue ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'
+                                          }`}
+                                        >
+                                          <div className="text-left">
+                                            <div className="text-[10px] font-bold text-slate-500 leading-none mb-1">{term.timeline}</div>
+                                            <div className={`text-xs font-bold ${
+                                              submission?.status === 'approved' ? 'text-green-700' :
+                                              submission?.status === 'pending' ? 'text-amber-700' :
+                                              isOverdue ? 'text-red-700' : 'text-slate-900'
+                                            }`}>
+                                              {submission?.status === 'approved' ? 'Paid & Approved' :
+                                               submission?.status === 'pending' ? 'Pending Approval' :
+                                               submission?.status === 'rejected' ? 'Payment Rejected' :
+                                               isOverdue ? 'Overdue - Pay Now' : 'Due for Payment'}
+                                            </div>
+                                          </div>
+                                          
+                                          {(!submission || submission.status === 'rejected') && (
+                                            <button 
+                                              disabled={previousUnpaid}
+                                              onClick={() => {
+                                                setSelectedFeeForPayment(fee);
+                                                setPaymentForm({
+                                                  transactionDetails: '',
+                                                  selectedTerms: [{ termIndex: termIdx, year }]
+                                                });
+                                                setShowPaymentModal(true);
+                                              }}
+                                              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                                                previousUnpaid 
+                                                  ? 'bg-slate-100 text-slate-300 cursor-not-allowed' 
+                                                  : 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20 hover:scale-105 active:scale-95'
+                                              }`}
+                                              title={previousUnpaid ? "Please pay earlier dues first" : "Submit payment"}
+                                            >
+                                              {previousUnpaid ? 'Locked' : 'Pay'}
+                                            </button>
+                                          )}
+                                          
+                                          {submission?.status === 'approved' && (
+                                            <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center text-white">
+                                              <Check size={14} strokeWidth={4} />
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {feeStructures.length === 0 && (
+                        <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                          <PieChart size={32} className="mx-auto text-slate-300 mb-3 opacity-20" />
+                          <p className="text-xs text-slate-400 font-medium">No fee structures defined yet.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2930,7 +3631,17 @@ export default function App() {
                         ))}
                       </select>
                     </div>
-                    <div className="sm:col-span-2 space-y-2">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Phone Number (Optional)</label>
+                      <input 
+                        type="tel"
+                        value={userProfile?.phone || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, phone: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+                        placeholder="e.g. +88017..."
+                      />
+                    </div>
+                    <div className="space-y-2">
                       <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Company Name</label>
                       <input 
                         type="text"
@@ -2938,6 +3649,26 @@ export default function App() {
                         onChange={(e) => setUserProfile({ ...userProfile, companyName: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
                         placeholder="Current workplace or company"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Designation</label>
+                      <input 
+                        type="text"
+                        value={userProfile?.designation || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, designation: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+                        placeholder="Current Designation"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Institution Name</label>
+                      <input 
+                        type="text"
+                        value={userProfile?.institution || ''}
+                        onChange={(e) => setUserProfile({ ...userProfile, institution: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+                        placeholder="Rangpur Polytechnic Institute (RPI)"
                       />
                     </div>
                   </div>
@@ -3020,6 +3751,13 @@ export default function App() {
                 {isAdmin && (
                   <>
                     <button 
+                      onClick={() => setAdminTab('members')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'members' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Search size={18} />
+                      <span className="font-bold text-sm">Member Analysis</span>
+                    </button>
+                    <button 
                       onClick={() => setAdminTab('general')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'general' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
                     >
@@ -3079,19 +3817,31 @@ export default function App() {
                       <Users size={18} />
                       <span className="font-bold text-sm">Approvals</span>
                     </div>
-                    {allUsers.filter(u => {
-                      if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance';
-                      if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary';
-                      return false;
-                    }).length > 0 && (
-                      <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
-                        {allUsers.filter(u => {
-                          if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance';
-                          if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary';
-                          return false;
-                        }).length}
-                      </span>
-                    )}
+                    {(() => {
+                      const queueCount = 
+                        specializedRole === 'finance' ? (
+                          allUsers.filter(u => u.membershipStatus === 'pending_finance').length + 
+                          paymentSubmissions.filter(p => p.status === 'pending').length
+                        ) :
+                        specializedRole === 'secretary' ? allUsers.filter(u => u.membershipStatus === 'pending_secretary').length : 
+                        0;
+                      
+                      return queueCount > 0 && (
+                        <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full border border-white/20 shadow-sm animate-pulse">
+                          {queueCount}
+                        </span>
+                      );
+                    })()}
+                  </button>
+                )}
+
+                {specializedRole === 'finance' && (
+                  <button 
+                    onClick={() => setAdminTab('fees')}
+                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'fees' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                  >
+                    <CreditCard size={18} />
+                    <span className="font-bold text-sm">Fee Management</span>
                   </button>
                 )}
 
@@ -3110,6 +3860,20 @@ export default function App() {
                     >
                       <CreditCard size={18} />
                       <span className="font-bold text-sm">Membership Setup</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('branding')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'branding' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <ImageIcon size={18} />
+                      <span className="font-bold text-sm">Header & Footer (Logo)</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('executive')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'executive' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Users size={18} />
+                      <span className="font-bold text-sm">Executive Committee</span>
                     </button>
                   </>
                 )}
@@ -3476,6 +4240,701 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                ) : adminTab === 'members' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col min-h-[600px]">
+                    <div className="p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div>
+                        <h3 className="font-display font-bold text-xl text-slate-900">Member Analysis & Directory</h3>
+                        <p className="text-slate-500 text-sm mt-1">Full database of registered and approved members.</p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row items-center gap-3">
+                        <div className="relative w-full sm:w-64">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                          <input 
+                            type="text"
+                            placeholder="Search name, ID, phone, etc..."
+                            value={memberAnalysisSearch}
+                            onChange={(e) => setMemberAnalysisSearch(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 pl-10 pr-4 py-2 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary outline-none transition-all"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <Filter size={14} className="text-slate-400" />
+                          <select
+                            value={memberAnalysisPaymentFilter}
+                            onChange={(e) => setMemberAnalysisPaymentFilter(e.target.value)}
+                            className="bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all cursor-pointer"
+                          >
+                            <option value="all">All Payments</option>
+                            <option value="approved">Paid Only</option>
+                            <option value="pending">Pending/Unpaid</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50/50">
+                            <th className="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">Member</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">Contact</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">Professional Info</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">Payments</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {allUsers
+                            .filter(u => {
+                              const searchLower = memberAnalysisSearch.toLowerCase();
+                              const matchesSearch = !memberAnalysisSearch || 
+                                u.name.toLowerCase().includes(searchLower) || 
+                                u.phone?.includes(memberAnalysisSearch) ||
+                                u.memberCode?.toLowerCase().includes(searchLower) ||
+                                u.session?.toLowerCase().includes(searchLower) ||
+                                u.email?.toLowerCase().includes(searchLower) ||
+                                u.designation?.toLowerCase().includes(searchLower) ||
+                                u.companyName?.toLowerCase().includes(searchLower) ||
+                                u.workplace?.toLowerCase().includes(searchLower) ||
+                                u.bloodGroup?.toLowerCase().includes(searchLower);
+
+                              const matchesPayment = memberAnalysisPaymentFilter === 'all' || 
+                                (memberAnalysisPaymentFilter === 'approved' ? u.membershipStatus === 'approved' : u.membershipStatus !== 'approved');
+
+                              return matchesSearch && matchesPayment;
+                            })
+                            .map((u) => (
+                              <tr key={u.id} className="hover:bg-slate-50/30 transition-colors group">
+                                <td className="px-8 py-5">
+                                  <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-100 shrink-0">
+                                      <img 
+                                        src={u.profilePicture || u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=random`} 
+                                        alt={u.name} 
+                                        className="w-full h-full object-cover"
+                                      />
+                                    </div>
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{u.name}</p>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        <span className="text-[10px] font-medium text-slate-400">{u.memberCode || 'No ID Assigned'}</span>
+                                        {u.membershipStatus === 'approved' && (
+                                          <span className="w-1 h-1 rounded-full bg-green-500" />
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-5">
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-2 text-slate-500">
+                                      <Phone size={12} className="text-slate-300" />
+                                      <span className="text-xs font-medium">{u.phone || 'N/A'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-slate-500">
+                                      <Mail size={12} className="text-slate-300" />
+                                      <span className="text-xs font-medium truncate max-w-[150px]">{u.email}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-5">
+                                  <div className="space-y-1">
+                                    <p className="text-xs font-bold text-slate-700">{u.designation || 'Engineer'}</p>
+                                    <p className="text-[10px] text-slate-400 max-w-[200px] truncate">{u.companyName || u.workplace || 'Not Specified'}</p>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-5">
+                                  <div className="flex flex-wrap gap-1.5">
+                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tight ${u.membershipStatus === 'approved' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
+                                      {(u.membershipStatus || 'unpaid').replace('_', ' ')}
+                                    </span>
+                                    {u.paymentHistory && u.paymentHistory.length > 0 ? (
+                                      <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[9px] font-black uppercase">
+                                        {u.paymentHistory.length} TXNS
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 bg-slate-100 text-slate-400 rounded-full text-[9px] font-black uppercase">
+                                        NO PAYMENTS
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-8 py-5 text-right">
+                                  <button 
+                                    onClick={() => setSelectedAnalysisUser(u)}
+                                    className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
+                                  >
+                                    <Eye size={18} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {allUsers.length === 0 && (
+                      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-slate-400">
+                        <Users size={48} className="text-slate-100 mb-4" />
+                        <p className="text-sm font-medium">No members found in the database.</p>
+                      </div>
+                    )}
+                  </div>
+                ) : adminTab === 'branding' ? (
+                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-2xl font-display font-bold text-slate-900">Logo Management</h3>
+                        <p className="text-slate-500 text-sm">Update the association logo shown in Header and Footer.</p>
+                      </div>
+                      <button 
+                        onClick={handleSaveBranding}
+                        className="bg-brand-primary text-white px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/20 flex items-center gap-2"
+                      >
+                        <Save size={16} />
+                        Update Header & Footer
+                      </button>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                      <div className="max-w-xl">
+                        <h4 className="text-sm font-bold text-slate-900 mb-6 flex items-center gap-2">
+                          <ImageIcon className="text-brand-primary" size={18} />
+                          Main Association Logo
+                        </h4>
+                        
+                        <div className="flex flex-col sm:flex-row items-center gap-8">
+                          <div className="w-40 h-40 rounded-3xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden group relative">
+                            {editLogoUrl ? (
+                              <>
+                                <img src={editLogoUrl} alt="Logo Preview" className="w-full h-full object-contain p-4" />
+                                <button 
+                                  onClick={() => setEditLogoUrl('')}
+                                  className="absolute inset-0 bg-red-500/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white font-bold text-xs"
+                                >
+                                  Remove
+                                </button>
+                              </>
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 text-slate-400">
+                                <Upload size={24} />
+                                <span className="text-[10px] font-bold uppercase tracking-wider">No Logo</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex-1 space-y-4">
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Logo Image URL</label>
+                              <div className="flex gap-2">
+                                <input 
+                                  type="text"
+                                  value={editLogoUrl}
+                                  onChange={(e) => setEditLogoUrl(e.target.value)}
+                                  className="flex-1 bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                  placeholder="https://..."
+                                />
+                                <label className="cursor-pointer bg-brand-primary/5 hover:bg-brand-primary/10 text-brand-primary p-3 rounded-xl transition-all">
+                                  <Upload size={18} />
+                                  <input 
+                                    type="file" 
+                                    className="hidden" 
+                                    accept="image/*"
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        try {
+                                          setIsUploading('logo');
+                                          const url = await uploadImage(file);
+                                          setEditLogoUrl(url);
+                                        } catch (err: any) {
+                                          alert(err.message);
+                                        } finally {
+                                          setIsUploading(null);
+                                        }
+                                      }
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                              <p className="text-[10px] text-slate-400">Recommended size: 200x200px or wide aspect ratio. PNG or SVG preferred.</p>
+                            </div>
+
+                            {isUploading === 'logo' && (
+                              <div className="flex items-center gap-2 text-brand-primary">
+                                <Loader2 size={14} className="animate-spin" />
+                                <span className="text-[10px] font-bold uppercase tracking-widest">Uploading logo...</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-12 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                          <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4">Header Preview</h5>
+                          <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center gap-3">
+                            {editLogoUrl ? (
+                              <img src={editLogoUrl} alt="Preview" className="h-8 w-auto object-contain" />
+                            ) : (
+                              <div className="bg-brand-primary p-1.5 rounded-lg">
+                                <Cpu className="text-white w-4 h-4" />
+                              </div>
+                            )}
+                            <span className="font-display font-bold text-lg text-brand-primary">
+                              EDEA RANGPUR
+                            </span>
+                          </div>
+
+                          <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mt-8 mb-4">Footer Social Icons Preview</h5>
+                          <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-wrap gap-3">
+                            {editSocialLinks.facebook && (
+                              <div className="p-2 bg-slate-100 rounded-lg text-slate-600"><Facebook size={16} /></div>
+                            )}
+                            {editSocialLinks.twitter && (
+                              <div className="p-2 bg-slate-100 rounded-lg text-slate-600"><Twitter size={16} /></div>
+                            )}
+                            {editSocialLinks.linkedin && (
+                              <div className="p-2 bg-slate-100 rounded-lg text-slate-600"><Linkedin size={16} /></div>
+                            )}
+                            {editSocialLinks.instagram && (
+                              <div className="p-2 bg-slate-100 rounded-lg text-slate-600"><Instagram size={16} /></div>
+                            )}
+                            {editSocialLinks.whatsapp && (
+                              <div className="p-2 bg-slate-100 rounded-lg text-slate-600"><MessageCircle size={16} /></div>
+                            )}
+                            {editSocialLinks.youtube && (
+                              <div className="p-2 bg-slate-100 rounded-lg text-slate-600"><Youtube size={16} /></div>
+                            )}
+                            {!Object.values(editSocialLinks).some(link => link) && (
+                              <p className="text-[10px] text-slate-400 font-medium italic">No social links configured. Add URLs above to see icons here.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                      <div className="max-w-3xl">
+                        <h4 className="text-sm font-bold text-slate-900 mb-6 flex items-center gap-2">
+                          <Info className="text-brand-primary" size={18} />
+                          Footer Information
+                        </h4>
+                        
+                        <div className="grid md:grid-cols-2 gap-8">
+                          <div className="space-y-6">
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Footer Description</label>
+                              <textarea 
+                                value={editFooterDescription}
+                                onChange={(e) => setEditFooterDescription(e.target.value)}
+                                rows={4}
+                                className="w-full bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                placeholder="A brief description for the footer..."
+                              />
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Office Address</label>
+                              <input 
+                                type="text"
+                                value={editOfficeAddress}
+                                onChange={(e) => setEditOfficeAddress(e.target.value)}
+                                className="w-full bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                placeholder="Full address..."
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Contact Email</label>
+                                <input 
+                                  type="email"
+                                  value={editContactEmail}
+                                  onChange={(e) => setEditContactEmail(e.target.value)}
+                                  className="w-full bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                  placeholder="info@edea..."
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Contact Phone</label>
+                                <input 
+                                  type="text"
+                                  value={editContactPhone}
+                                  onChange={(e) => setEditContactPhone(e.target.value)}
+                                  className="w-full bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                  placeholder="+880..."
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Privacy Policy</label>
+                              <textarea 
+                                value={editPrivacyPolicy}
+                                onChange={(e) => setEditPrivacyPolicy(e.target.value)}
+                                rows={4}
+                                className="w-full bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                placeholder="Privacy policy details..."
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Terms of Service</label>
+                              <textarea 
+                                value={editTermsOfService}
+                                onChange={(e) => setEditTermsOfService(e.target.value)}
+                                rows={4}
+                                className="w-full bg-slate-50 border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-brand-primary focus:border-brand-primary"
+                                placeholder="Terms of service details..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-6">
+                            <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Social Media Links</h5>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400">Facebook URL</label>
+                                <div className="relative">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+                                    <Facebook size={14} />
+                                  </div>
+                                  <input 
+                                    type="text"
+                                    value={editSocialLinks.facebook}
+                                    onChange={(e) => setEditSocialLinks({...editSocialLinks, facebook: e.target.value})}
+                                    className="w-full pl-12 bg-slate-50 border-slate-200 rounded-xl py-3 text-sm focus:ring-brand-primary"
+                                    placeholder="https://facebook.com/..."
+                                  />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400">LinkedIn URL</label>
+                                <div className="relative">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 bg-blue-50 text-blue-700 rounded-lg">
+                                    <Linkedin size={14} />
+                                  </div>
+                                  <input 
+                                    type="text"
+                                    value={editSocialLinks.linkedin}
+                                    onChange={(e) => setEditSocialLinks({...editSocialLinks, linkedin: e.target.value})}
+                                    className="w-full pl-12 bg-slate-50 border-slate-200 rounded-xl py-3 text-sm focus:ring-brand-primary"
+                                    placeholder="https://linkedin.com/..."
+                                  />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400">Twitter URL</label>
+                                <div className="relative">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 bg-slate-900 text-white rounded-lg">
+                                    <Twitter size={14} />
+                                  </div>
+                                  <input 
+                                    type="text"
+                                    value={editSocialLinks.twitter}
+                                    onChange={(e) => setEditSocialLinks({...editSocialLinks, twitter: e.target.value})}
+                                    className="w-full pl-12 bg-slate-50 border-slate-200 rounded-xl py-3 text-sm focus:ring-brand-primary"
+                                    placeholder="https://twitter.com/..."
+                                  />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400">Instagram URL</label>
+                                <div className="relative">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 bg-pink-50 text-pink-600 rounded-lg">
+                                    <Instagram size={14} />
+                                  </div>
+                                  <input 
+                                    type="text"
+                                    value={editSocialLinks.instagram}
+                                    onChange={(e) => setEditSocialLinks({...editSocialLinks, instagram: e.target.value})}
+                                    className="w-full pl-12 bg-slate-50 border-slate-200 rounded-xl py-3 text-sm focus:ring-brand-primary"
+                                    placeholder="https://instagram.com/..."
+                                  />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400">WhatsApp Group Link</label>
+                                <div className="relative">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 bg-green-50 text-green-600 rounded-lg">
+                                    <MessageCircle size={14} />
+                                  </div>
+                                  <input 
+                                    type="text"
+                                    value={editSocialLinks.whatsapp}
+                                    onChange={(e) => setEditSocialLinks({...editSocialLinks, whatsapp: e.target.value})}
+                                    className="w-full pl-12 bg-slate-50 border-slate-200 rounded-xl py-3 text-sm focus:ring-brand-primary"
+                                    placeholder="https://chat.whatsapp.com/..."
+                                  />
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400">YouTube URL</label>
+                                <div className="relative">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 bg-red-50 text-red-600 rounded-lg">
+                                    <Youtube size={14} />
+                                  </div>
+                                  <input 
+                                    type="text"
+                                    value={editSocialLinks.youtube}
+                                    onChange={(e) => setEditSocialLinks({...editSocialLinks, youtube: e.target.value})}
+                                    className="w-full pl-12 bg-slate-50 border-slate-200 rounded-xl py-3 text-sm focus:ring-brand-primary"
+                                    placeholder="https://youtube.com/..."
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : adminTab === 'executive' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                      <h3 className="font-display font-bold text-xl text-slate-900">Executive Committee Setup</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Sync Enabled</span>
+                      </div>
+                    </div>
+                    
+                    <div className="p-8 space-y-8">
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Committee Group Cover Photo</label>
+                        <div className="flex flex-col gap-6 p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                          <div className="relative w-full aspect-[21/9] rounded-2xl overflow-hidden border-2 border-white shadow-sm bg-slate-100 group">
+                            {editPortal.ecCoverPhoto ? (
+                              <img src={editPortal.ecCoverPhoto} alt="EC Cover Preview" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-300">
+                                <ImageIcon size={48} />
+                              </div>
+                            )}
+                            {isUploading === 'ec-cover' && (
+                              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                                <div className="flex flex-col items-center gap-3">
+                                  <Loader2 size={32} className="animate-spin text-white" />
+                                  <span className="text-white text-xs font-bold uppercase tracking-widest">Processing...</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-3">
+                            <input 
+                              type="file"
+                              id="ec-cover-admin-upload"
+                              className="hidden"
+                              accept="image/*"
+                              onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  try {
+                                    setIsUploading('ec-cover');
+                                    const url = await uploadImage(file);
+                                    setEditPortal({...editPortal, ecCoverPhoto: url});
+                                  } catch (err) {
+                                    alert(err instanceof Error ? err.message : 'Upload failed');
+                                  } finally {
+                                    setIsUploading(null);
+                                  }
+                                }
+                              }}
+                            />
+                            <label 
+                              htmlFor="ec-cover-admin-upload"
+                              className="flex items-center justify-center gap-3 px-6 py-4 bg-white border border-slate-100 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-900 hover:text-white transition-all cursor-pointer shadow-sm group active:scale-95"
+                            >
+                              <Upload size={16} className="group-hover:scale-110 transition-transform" />
+                              Change Committee Cover Photo
+                            </label>
+                            <p className="text-[10px] text-slate-400 text-center font-medium italic">This photo appears on the Homepage "Leadership" section and the main Committee page.</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Member Management Section */}
+                      <div className="pt-12 border-t border-slate-100 space-y-6">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Committee Member Management</h4>
+                          <button 
+                            onClick={() => setIsAddingECMember(!isAddingECMember)}
+                            className="flex items-center gap-2 text-brand-primary font-bold text-xs hover:underline"
+                          >
+                            {isAddingECMember ? 'Cancel' : '+ Add Committee Member'}
+                          </button>
+                        </div>
+
+                        {isAddingECMember && (
+                          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
+                            <div className="grid sm:grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Member Designation *</label>
+                                <input 
+                                  type="text"
+                                  placeholder="e.g. President, General Secretary"
+                                  value={ecMemberForm.role}
+                                  onChange={(e) => setEcMemberForm({...ecMemberForm, role: e.target.value})}
+                                  className="w-full px-4 py-3 bg-white border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none text-left"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Search & Select Member *</label>
+                                <div className="space-y-3">
+                                  <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                    <input 
+                                      type="text"
+                                      placeholder="Search by name or session..."
+                                      value={ecMemberSearch}
+                                      onChange={(e) => setEcMemberSearch(e.target.value)}
+                                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-xl text-sm focus:ring-2 focus:ring-brand-primary outline-none"
+                                    />
+                                  </div>
+                                  
+                                  <div className="max-h-[200px] overflow-y-auto bg-white border border-slate-100 rounded-xl divide-y divide-slate-50 shadow-inner">
+                                    {allUsers
+                                      .filter(u => u.membershipStatus === 'approved')
+                                      .filter(u => 
+                                        !ecMemberSearch || 
+                                        u.name.toLowerCase().includes(ecMemberSearch.toLowerCase()) || 
+                                        (u.session && u.session.toLowerCase().includes(ecMemberSearch.toLowerCase()))
+                                      )
+                                      .slice(0, 50) // Performance limit
+                                      .map(u => (
+                                        <button
+                                          key={u.id}
+                                          onClick={() => {
+                                            setEcMemberForm({...ecMemberForm, userId: u.id});
+                                            setEcMemberSearch(u.name);
+                                          }}
+                                          className={`w-full px-4 py-3 text-left hover:bg-slate-50 transition-colors flex items-center justify-between group ${ecMemberForm.userId === u.id ? 'bg-brand-primary/5' : ''}`}
+                                        >
+                                          <div>
+                                            <div className="font-bold text-sm text-slate-900">{u.name}</div>
+                                            <div className="text-[10px] text-slate-400">Session: {u.session || 'N/A'} • {u.companyName || u.institution || 'N/A'}</div>
+                                          </div>
+                                          {ecMemberForm.userId === u.id && (
+                                            <div className="w-2 h-2 rounded-full bg-brand-primary" />
+                                          )}
+                                        </button>
+                                      ))}
+                                    {allUsers.filter(u => u.membershipStatus === 'approved').length === 0 && (
+                                      <div className="p-4 text-center text-[10px] text-slate-400">No approved members found.</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex justify-end">
+                              <button 
+                                onClick={handleAddECMember}
+                                className="bg-slate-900 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-all shadow-lg"
+                              >
+                                Add to Committee
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid gap-3">
+                          {executiveMembers.map((member) => (
+                            <div key={member.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-brand-primary/30 transition-all">
+                              <div className="flex items-center gap-4">
+                                <img src={member.image} alt="" className="w-12 h-12 rounded-xl object-cover border border-slate-50" />
+                                <div className="text-left">
+                                  <div className="text-[8px] font-black text-brand-primary uppercase tracking-tighter mb-0.5">{member.role}</div>
+                                  <div className="text-sm font-bold text-slate-900 leading-tight">{member.name}</div>
+                                  <div className="text-[10px] text-slate-400 font-medium">{member.institution}</div>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => handleRemoveECMember(member.id)}
+                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          ))}
+                          {executiveMembers.length === 0 && (
+                            <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-100">
+                              <Users className="mx-auto text-slate-300 mb-3 opacity-20" size={48} />
+                              <p className="text-sm text-slate-400 font-medium">No committee members added yet.</p>
+                              <p className="text-[10px] text-slate-300">Existing demo data is being shown on homepage.</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Active Member Status Display Section */}
+                        <div className="pt-12 border-t border-slate-100 mb-8">
+                          <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-brand-primary" />
+                                  <h4 className="text-sm font-bold text-slate-900">Active Member Status Display</h4>
+                                </div>
+                                <p className="text-[10px] text-slate-500 font-medium ml-3.5">Configure how the member counter appears to visitors.</p>
+                              </div>
+                              
+                              <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200">
+                                <button 
+                                  onClick={() => setEditMemberCountMode('realtime')}
+                                  className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${editMemberCountMode === 'realtime' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                >
+                                  Real-time
+                                </button>
+                                <button 
+                                  onClick={() => setEditMemberCountMode('manual')}
+                                  className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${editMemberCountMode === 'manual' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                >
+                                  Manual
+                                </button>
+                              </div>
+
+                              {editMemberCountMode === 'manual' && (
+                                <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200 min-w-[200px]">
+                                  <Users size={14} className="text-slate-400" />
+                                  <input 
+                                    type="number"
+                                    value={editManualMemberCount}
+                                    onChange={(e) => setEditManualMemberCount(parseInt(e.target.value) || 0)}
+                                    className="w-full bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-900"
+                                    placeholder="Enter Number..."
+                                  />
+                                </div>
+                              )}
+                              
+                              {editMemberCountMode === 'realtime' && (
+                                <div className="bg-brand-primary/5 px-4 py-2 rounded-xl border border-brand-primary/10 flex items-center gap-3">
+                                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                                  <span className="text-[10px] font-bold text-brand-primary uppercase tracking-widest leading-none">
+                                    Current: {allUsers.filter(u => u.membershipStatus === 'approved').length} Members
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-8 flex items-center justify-end gap-4 border-t border-slate-50">
+                        <button 
+                          onClick={() => setEditPortal(portalConfig)}
+                          className="px-6 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all uppercase tracking-widest"
+                        >
+                          Cancel
+                        </button>
+                        <button 
+                          onClick={handleSavePortal}
+                          className="flex items-center gap-3 bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                        >
+                          <Save size={16} />
+                          Save Committee Settings
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 ) : adminTab === 'notices' ? (
                   <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
                     {isAddingNotice ? (
@@ -3835,231 +5294,321 @@ export default function App() {
                   </div>
                 ) : adminTab === 'finance' ? (
                   <div className="space-y-6">
-                    {/* Integrated Payment Approval Queue */}
-                    {allUsers.filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance').length > 0 && (
-                      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8">
-                        <div className="flex items-center justify-between mb-6">
-                          <div>
-                            <h3 className="font-display font-bold text-xl text-slate-900 leading-none">Pending Payment Approvals</h3>
-                            <p className="text-[10px] text-slate-400 mt-2 font-medium uppercase tracking-widest">Verify transactions before membership activation</p>
-                          </div>
-                          <div className="bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-amber-100 flex items-center gap-2">
-                            <Clock size={12} /> {allUsers.filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance').length} Pending
-                          </div>
-                        </div>
-                        <div className="grid gap-4">
-                          {allUsers
-                            .filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance')
-                            .map(m => (
-                            <div key={m.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-brand-primary/20 transition-all">
-                              <div>
-                                <div className="flex items-center gap-3 mb-2">
-                                  <h4 className="font-bold text-slate-900">{m.name}</h4>
-                                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${
-                                    (m.membershipStatus || '').includes('declined') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
-                                  }`}>
-                                    {(m.membershipStatus || 'unpaid').replace('_', ' ')}
-                                  </span>
-                                </div>
-                                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px]">
-                                  <span className="text-slate-400">Method: <span className="text-slate-600 font-bold uppercase">{m.paymentMethod}</span></span>
-                                  <span className="text-slate-400">TXID: <span className="text-slate-600 font-mono font-bold">{m.transactionId}</span></span>
-                                  <span className="text-slate-400">Amount: <span className="text-slate-600 font-bold tracking-tighter">৳{m.paymentAmount}</span></span>
-                                  <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{new Date(m.paymentSubmittedAt).toLocaleDateString()}</span></span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <button 
-                                  onClick={() => updateUserStatus(m.id, 'pending_secretary')}
-                                  className="px-6 py-2 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all flex items-center gap-2 shadow-sm"
-                                >
-                                  <Check size={14} strokeWidth={3} /> Approve
-                                </button>
-                                <button 
-                                  onClick={() => updateUserStatus(m.id, 'declined_finance')}
-                                  className="px-6 py-2 bg-white border border-red-200 text-red-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-all flex items-center gap-2"
-                                >
-                                  <X size={14} strokeWidth={3} /> Decline
-                                </button>
-                              </div>
+                    {/* General Ledger only in Finances tab */}
+                    <div className="space-y-6">
+                      {/* General Ledger */}
+                        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                          <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                            <div>
+                              <h3 className="font-display font-bold text-xl text-slate-900">Finance Ledger</h3>
+                              <p className="text-xs text-slate-500 mt-1">Track income and expenditures</p>
                             </div>
-                          ))}
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
+                                <div className="text-xl font-display font-bold text-slate-900">
+                                  ৳ {financeEntries.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => setShowFinanceForm(!showFinanceForm)}
+                                className="bg-slate-900 text-white p-3 rounded-xl hover:bg-brand-primary transition-all"
+                              >
+                                {showFinanceForm ? <Minus size={20} /> : <Plus size={20} />}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="p-8 space-y-8">
+                            {showFinanceForm && (
+                              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-6">
+                                {/* Finance Entry Form Fields ... */}
+                                <div className="grid md:grid-cols-3 gap-6">
+                                  <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Entry Type</label>
+                                    <div className="flex gap-2 p-1 bg-white rounded-xl border border-slate-200">
+                                      <button 
+                                        onClick={() => setFinanceForm({...financeForm, type: 'income'})}
+                                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'income' ? 'bg-green-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                      >
+                                        Income
+                                      </button>
+                                      <button 
+                                        onClick={() => setFinanceForm({...financeForm, type: 'expense'})}
+                                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'expense' ? 'bg-red-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                      >
+                                        Expense
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Amount (৳)</label>
+                                    <input 
+                                      type="number"
+                                      value={financeForm.amount || ''}
+                                      onChange={(e) => setFinanceForm({...financeForm, amount: parseFloat(e.target.value) || 0})}
+                                      className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                      placeholder="0.00"
+                                    />
+                                  </div>
+                                  <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
+                                    <input 
+                                      type="date"
+                                      value={financeForm.date}
+                                      onChange={(e) => setFinanceForm({...financeForm, date: e.target.value})}
+                                      className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="grid md:grid-cols-2 gap-6">
+                                  <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
+                                    <input 
+                                      type="text"
+                                      value={financeForm.description}
+                                      onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
+                                      className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                      placeholder="e.g., General Donation"
+                                    />
+                                  </div>
+                                  <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
+                                    <select 
+                                      value={financeForm.category}
+                                      onChange={(e) => setFinanceForm({...financeForm, category: e.target.value})}
+                                      className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                    >
+                                      <option value="">Select Category</option>
+                                      <option value="Membership">Membership</option>
+                                      <option value="Donation">Donation</option>
+                                      <option value="Event">Event</option>
+                                      <option value="Office">Office</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={async () => {
+                                    if (!financeForm.amount || !financeForm.description) return alert('Required fields missing');
+                                    try {
+                                      await addDoc(collection(db, 'finances'), {
+                                        ...financeForm,
+                                        recordedBy: user?.displayName || 'Admin',
+                                        createdAt: serverTimestamp()
+                                      });
+                                      setFinanceForm({ type: 'income', amount: 0, description: '', category: '', date: new Date().toISOString().split('T')[0] });
+                                      setShowFinanceForm(false);
+                                    } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'finances'); }
+                                  }}
+                                  className="w-full bg-brand-primary text-white p-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                                >
+                                  Record Entry
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Recent Ledger Table */}
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left">
+                                <thead className="bg-slate-50 border-b border-slate-100">
+                                  <tr>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Date/Desc</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Category</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Amount</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                  {financeEntries.map(entry => (
+                                    <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
+                                      <td className="px-6 py-4">
+                                        <div className="text-sm font-bold text-slate-900">{entry.description}</div>
+                                        <div className="text-[10px] text-slate-400">{entry.date}</div>
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{entry.category || 'General'}</span>
+                                      </td>
+                                      <td className={`px-6 py-4 text-sm font-black text-right ${entry.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                                        {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
+                                      </td>
+                                      <td className="px-6 py-4 text-center">
+                                        <button 
+                                          onClick={async () => { if(confirm('Delete?')) await deleteDoc(doc(db, 'finances', entry.id)); }}
+                                          className="text-slate-300 hover:text-red-500 transition-colors"
+                                        >
+                                          <Trash2 size={16} />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    )}
-
-                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                    </div>
+                  ) : adminTab === 'fees' ? (
+                  <div className="space-y-6">
+                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="flex items-center justify-between mb-8">
                         <div>
-                          <h3 className="font-display font-bold text-xl text-slate-900">Finance Ledger & Accounts</h3>
-                          <p className="text-xs text-slate-500 mt-1">Track association income and expenditures.</p>
+                          <h3 className="font-display font-bold text-xl text-slate-900">Fee Structures</h3>
+                          <p className="text-xs text-slate-500 mt-1">Manage recurring fees for executive members.</p>
                         </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
-                            <div className="text-xl font-display font-bold text-slate-900">
-                              ৳ {financeEntries.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
-                            </div>
-                          </div>
-                          <button 
-                            onClick={() => setShowFinanceForm(!showFinanceForm)}
-                            className="bg-slate-900 text-white p-3 rounded-xl hover:bg-brand-primary transition-all"
-                          >
-                            {showFinanceForm ? <Minus size={20} /> : <Plus size={20} />}
-                          </button>
-                        </div>
+                        <button 
+                          onClick={() => setIsAddingFee(!isAddingFee)}
+                          className="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-primary transition-all flex items-center gap-2 shadow-lg"
+                        >
+                          {isAddingFee ? <Minus size={16} /> : <Plus size={16} />}
+                          {isAddingFee ? 'Cancel' : 'Define New Fee'}
+                        </button>
                       </div>
 
-                      <div className="p-8 space-y-8">
-                        {showFinanceForm && (
-                          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-6">
+                      {isAddingFee && (
+                        <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 mb-8 animate-in fade-in slide-in-from-top-4 duration-300">
+                          <form onSubmit={handleSaveFee} className="space-y-8">
                             <div className="grid md:grid-cols-3 gap-6">
-                              <div className="space-y-4">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Entry Type</label>
-                                <div className="flex gap-2 p-1 bg-white rounded-xl border border-slate-200">
-                                  <button 
-                                    onClick={() => setFinanceForm({...financeForm, type: 'income'})}
-                                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'income' ? 'bg-green-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
-                                  >
-                                    Income
-                                  </button>
-                                  <button 
-                                    onClick={() => setFinanceForm({...financeForm, type: 'expense'})}
-                                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.type === 'expense' ? 'bg-red-500 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
-                                  >
-                                    Expense
-                                  </button>
-                                </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fee Name</label>
+                                <input 
+                                  required
+                                  type="text"
+                                  value={feeForm.name}
+                                  onChange={(e) => setFeeForm({...feeForm, name: e.target.value})}
+                                  className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all"
+                                  placeholder="e.g. Executive Support Fund"
+                                />
                               </div>
-                              <div className="space-y-4">
+                              <div className="space-y-2">
                                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Amount (৳)</label>
                                 <input 
+                                  required
                                   type="number"
-                                  value={financeForm.amount || ''}
-                                  onChange={(e) => setFinanceForm({...financeForm, amount: parseFloat(e.target.value) || 0})}
-                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
-                                  placeholder="0.00"
+                                  value={feeForm.amount || ''}
+                                  onChange={(e) => setFeeForm({...feeForm, amount: parseFloat(e.target.value) || 0})}
+                                  className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all"
+                                  placeholder="Amount"
                                 />
                               </div>
-                              <div className="space-y-4">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
-                                <input 
-                                  type="date"
-                                  value={financeForm.date}
-                                  onChange={(e) => setFinanceForm({...financeForm, date: e.target.value})}
-                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                                />
-                              </div>
-                            </div>
-                            
-                            <div className="grid md:grid-cols-2 gap-6">
-                              <div className="space-y-4">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
-                                <input 
-                                  type="text"
-                                  value={financeForm.description}
-                                  onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
-                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                                  placeholder="e.g., Membership Fee - Jan 2024"
-                                />
-                              </div>
-                              <div className="space-y-4">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Annual Frequency</label>
                                 <select 
-                                  value={financeForm.category}
-                                  onChange={(e) => setFinanceForm({...financeForm, category: e.target.value})}
-                                  className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                  value={feeForm.frequency}
+                                  onChange={(e) => {
+                                    const freq = parseInt(e.target.value);
+                                    const newTerms = Array.from({ length: freq }, (_, i) => ({
+                                      timeline: feeForm.terms[i]?.timeline || '',
+                                      lastDate: feeForm.terms[i]?.lastDate || { day: 31, month: 12 }
+                                    }));
+                                    setFeeForm({...feeForm, frequency: freq, terms: newTerms});
+                                  }}
+                                  className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all"
                                 >
-                                  <option value="">Select Category</option>
-                                  <option value="Membership">Membership Fees</option>
-                                  <option value="Sponsorship">Event Sponsorship</option>
-                                  <option value="Workshop">Technical Workshops</option>
-                                  <option value="Office">Office Maintenance</option>
-                                  <option value="Social">Social Activities</option>
-                                  <option value="Other">Other</option>
+                                  {[1, 2, 3, 4, 6, 12].map(f => (
+                                    <option key={f} value={f}>{f} times / year</option>
+                                  ))}
                                 </select>
                               </div>
                             </div>
 
+                            <div className="space-y-4">
+                              <h4 className="text-xs font-black uppercase tracking-widest text-slate-900 border-b border-slate-200 pb-2">Dynamic Term Deadlines</h4>
+                              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {feeForm.terms.map((term, idx) => (
+                                  <div key={idx} className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm space-y-4 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-1 h-full bg-brand-primary" />
+                                    <h5 className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Term {idx + 1}</h5>
+                                    <div className="space-y-4">
+                                      <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Timeline</label>
+                                        <input 
+                                          required
+                                          type="text"
+                                          value={term.timeline}
+                                          onChange={(e) => {
+                                            const newTerms = [...feeForm.terms];
+                                            newTerms[idx].timeline = e.target.value;
+                                            setFeeForm({...feeForm, terms: newTerms});
+                                          }}
+                                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-lg outline-none text-xs font-bold"
+                                          placeholder="e.g. Jan - Mar"
+                                        />
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Last Day</label>
+                                          <input 
+                                            required
+                                            type="number"
+                                            min={1}
+                                            max={31}
+                                            value={term.lastDate.day}
+                                            onChange={(e) => {
+                                              const newTerms = [...feeForm.terms];
+                                              newTerms[idx].lastDate.day = parseInt(e.target.value);
+                                              setFeeForm({...feeForm, terms: newTerms});
+                                            }}
+                                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-lg outline-none text-xs font-bold text-center"
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Month</label>
+                                          <select 
+                                            value={term.lastDate.month}
+                                            onChange={(e) => {
+                                              const newTerms = [...feeForm.terms];
+                                              newTerms[idx].lastDate.month = parseInt(e.target.value);
+                                              setFeeForm({...feeForm, terms: newTerms});
+                                            }}
+                                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-lg outline-none text-xs font-bold"
+                                          >
+                                            {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => (
+                                              <option key={i} value={i + 1}>{m}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="flex justify-end gap-4">
+                              <button 
+                                type="submit"
+                                className="px-8 py-3 bg-brand-primary text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 transition-all outline-none"
+                              >
+                                Create Fee Structure
+                              </button>
+                            </div>
+                          </form>
+                        </div>
+                      )}
+
+                      <div className="grid gap-6">
+                        {feeStructures.map(fee => (
+                          <div key={fee.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-brand-primary/20 transition-all">
+                            <div>
+                              <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{fee.name}</h4>
+                              <div className="flex items-center gap-6 mt-2">
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400">
+                                  <CreditCard size={12} /> ৳{fee.amount} / term
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400">
+                                  <Clock size={12} /> {fee.frequency} times / year
+                                </div>
+                              </div>
+                            </div>
                             <button 
-                              onClick={async () => {
-                                if (!financeForm.amount || !financeForm.description) return alert('Amount and Description are required');
-                                try {
-                                  await addDoc(collection(db, 'finances'), {
-                                    ...financeForm,
-                                    recordedBy: user?.displayName || user?.email || 'Admin',
-                                    createdAt: serverTimestamp()
-                                  });
-                                  setFinanceForm({ type: 'income', amount: 0, description: '', category: '', date: new Date().toISOString().split('T')[0] });
-                                  setShowFinanceForm(false);
-                                  setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Financial entry recorded' });
-                                  setTimeout(() => setSaveStatus(null), 3000);
-                                } catch (err) {
-                                  handleFirestoreError(err, OperationType.CREATE, 'finances');
-                                }
-                              }}
-                              className="w-full bg-brand-primary text-white px-8 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                              onClick={() => handleDeleteFee(fee.id)}
+                              className="w-10 h-10 flex items-center justify-center bg-white border border-slate-100 rounded-xl text-slate-300 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
                             >
-                              Record Transaction
+                              <Trash2 size={18} />
                             </button>
                           </div>
-                        )}
-
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recent Transactions</label>
-                            <div className="flex gap-4 text-[10px] font-bold">
-                              <span className="text-green-500">Income: ৳{financeEntries.filter(e => e.type === 'income').reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
-                              <span className="text-red-500">Expenses: ৳{financeEntries.filter(e => e.type === 'expense').reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
-                            </div>
-                          </div>
-                          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
-                            <table className="w-full text-left">
-                              <thead className="bg-slate-50 border-b border-slate-100">
-                                <tr>
-                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Date & Desc</th>
-                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Category</th>
-                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Amount</th>
-                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Action</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-50">
-                                {financeEntries.map(entry => (
-                                  <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-6 py-4">
-                                      <div className="text-sm font-bold text-slate-900">{entry.description}</div>
-                                      <div className="text-[10px] text-slate-400">{entry.date}</div>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{entry.category || 'General'}</span>
-                                    </td>
-                                    <td className={`px-6 py-4 text-sm font-black text-right ${entry.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                      {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
-                                    </td>
-                                    <td className="px-6 py-4 text-center">
-                                      <button 
-                                        onClick={async () => {
-                                          if(confirm('Delete this entry?')) {
-                                            await deleteDoc(doc(db, 'finances', entry.id));
-                                          }
-                                        }}
-                                        className="text-slate-300 hover:text-red-500 transition-colors"
-                                      >
-                                        <Trash2 size={16} />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            {financeEntries.length === 0 && (
-                              <div className="py-20 text-center text-slate-300">
-                                <PieChart size={48} className="mx-auto mb-4 opacity-20" />
-                                <p className="font-bold text-sm">No financial records yet</p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -4652,84 +6201,150 @@ export default function App() {
                     </div>
                   </div>
                 ) : adminTab === 'approvals' ? (
-                  <div className="space-y-6">
+                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-8">
                        <div className="flex items-center justify-between border-b border-slate-50 pb-4 mb-6">
-                         <h3 className="font-display font-bold text-xl text-slate-900">
-                          {specializedRole === 'finance' ? 'Pending Payment Approvals (Finance)' : 
-                           specializedRole === 'secretary' ? 'Pending Membership Approvals (Secretary)' : 
-                           'Association User Management'}
-                         </h3>
+                         <div>
+                           <h3 className="font-display font-bold text-xl text-slate-900 leading-none">
+                             Pending Approvals
+                           </h3>
+                           <p className="text-[10px] text-slate-400 mt-2 font-medium uppercase tracking-widest">Review and approve registration payments and annual fee submissions</p>
+                         </div>
                          <div className="flex gap-2">
-                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
-                             Total: {allUsers.length}
-                           </span>
-                           <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded-md border border-amber-100">
-                             Queue: {allUsers.filter(u => {
-                               if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance';
-                               if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary';
-                               return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
-                             }).length}
+                           <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest bg-amber-50 px-3 py-1 rounded-full border border-amber-100 flex items-center gap-2">
+                             <Clock size={12} /> Total Pending: {
+                               allUsers.filter(u => {
+                                 if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
+                                 if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
+                                 return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
+                               }).length + (specializedRole === 'finance' ? paymentSubmissions.filter(p => p.status === 'pending').length : 0)
+                             }
                            </span>
                          </div>
                        </div>
 
-                       {/* Approval Queue */}
-                       {(specializedRole === 'finance' || specializedRole === 'secretary') && (
+                       <div className="space-y-12">
+                         {/* Unified Approvals Queue */}
                          <div className="space-y-6">
-                           <div className="grid gap-4">
-                             {allUsers
-                               .filter(u => {
-                                 if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
-                                 if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
-                                 return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
-                               })
-                               .map(m => (
-                               <div key={m.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
-                                 <div>
-                                   <div className="flex items-center gap-3 mb-2">
-                                     <h4 className="font-bold text-slate-900">{m.name}</h4>
-                                     <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${
-                                       (m.membershipStatus || '').includes('declined') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
-                                     }`}>
-                                       {(m.membershipStatus || 'unpaid').replace('_', ' ')}
-                                     </span>
+                           {/* Registration Approvals Sub-section */}
+                           {(specializedRole === 'finance' || specializedRole === 'secretary') && (
+                             <div className="space-y-4">
+                               <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                                 <Users size={14} /> Registration Requests
+                               </h4>
+                               <div className="grid gap-4">
+                                 {allUsers
+                                   .filter(u => {
+                                     if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
+                                     if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
+                                     return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
+                                   })
+                                   .map(m => (
+                                   <div key={m.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-brand-primary/20 transition-all">
+                                     <div>
+                                       <div className="flex items-center gap-3 mb-2">
+                                         <h4 className="font-bold text-slate-900">{m.name}</h4>
+                                         <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${
+                                           (m.membershipStatus || '').includes('declined') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+                                         }`}>
+                                           {(m.membershipStatus || 'unpaid').replace('_', ' ')}
+                                         </span>
+                                       </div>
+                                       <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px]">
+                                         <span className="text-slate-400">Method: <span className="text-slate-600 font-bold uppercase">{m.paymentMethod}</span></span>
+                                         <span className="text-slate-400">TXID: <span className="text-slate-600 font-mono font-bold">{m.transactionId}</span></span>
+                                         <span className="text-slate-400">Amount: <span className="text-slate-600 font-bold tracking-tighter">৳{m.paymentAmount}</span></span>
+                                         <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{m.paymentSubmittedAt ? new Date(m.paymentSubmittedAt).toLocaleDateString() : 'N/A'}</span></span>
+                                       </div>
+                                     </div>
+                                     <div className="flex items-center gap-3">
+                                       <button 
+                                         onClick={() => updateUserStatus(m.id, specializedRole === 'finance' ? 'pending_secretary' : 'approved')}
+                                         className="px-6 py-2.5 bg-green-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:shadow-lg transition-all flex items-center gap-2"
+                                       >
+                                         <Check size={14} strokeWidth={3} /> Approve
+                                       </button>
+                                       <button 
+                                         onClick={() => updateUserStatus(m.id, specializedRole === 'finance' ? 'declined_finance' : 'declined_secretary')}
+                                         className="px-6 py-2.5 bg-white border border-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-all flex items-center gap-2"
+                                       >
+                                         <X size={14} strokeWidth={3} /> Decline
+                                       </button>
+                                     </div>
                                    </div>
-                                   <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                                     <span className="text-slate-400">Method: <span className="text-slate-600 font-bold uppercase">{m.paymentMethod}</span></span>
-                                     <span className="text-slate-400">TXID: <span className="text-slate-600 font-mono font-bold">{m.transactionId}</span></span>
-                                     <span className="text-slate-400">Amount: <span className="text-slate-600 font-bold">৳{m.paymentAmount}</span></span>
-                                     <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{new Date(m.paymentSubmittedAt).toLocaleDateString()}</span></span>
+                                 ))}
+                                 {allUsers.filter(u => {
+                                   if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
+                                   if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
+                                   return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
+                                 }).length === 0 && (
+                                   <div className="py-8 text-center text-slate-300 italic text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-100">
+                                     No pending registration requests.
                                    </div>
-                                 </div>
-                                 <div className="flex items-center gap-3">
-                                   <button 
-                                     onClick={() => updateUserStatus(m.id, specializedRole === 'finance' ? 'pending_secretary' : 'approved')}
-                                     className="px-6 py-2 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all flex items-center gap-2"
-                                   >
-                                     <Check size={14} strokeWidth={3} /> Approve
-                                   </button>
-                                   <button 
-                                     onClick={() => updateUserStatus(m.id, specializedRole === 'finance' ? 'declined_finance' : 'declined_secretary')}
-                                     className="px-6 py-2 bg-white border border-red-200 text-red-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-all flex items-center gap-2"
-                                   >
-                                     <X size={14} strokeWidth={3} /> Decline
-                                   </button>
-                                 </div>
+                                 )}
                                </div>
-                             ))}
-                             {allUsers.filter(u => {
-                               if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
-                               if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
-                               return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
-                             }).length === 0 && (
-                               <div className="py-12 text-center text-slate-300 italic text-sm">
-                                 No pending approval requests in the queue.
+                             </div>
+                           )}
+
+                           {/* Fee Payment Approvals Sub-section */}
+                           {specializedRole === 'finance' && (
+                             <div className="space-y-4 pt-8 border-t border-slate-50">
+                               <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                                 <Receipt size={14} /> Annual Fee Submissions
+                               </h4>
+                               <div className="grid gap-4">
+                                 {paymentSubmissions
+                                   .filter(p => p.status === 'pending')
+                                   .map(p => (
+                                   <div key={p.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-8 hover:border-brand-primary/20 transition-all group">
+                                     <div className="space-y-4">
+                                       <div className="flex items-center gap-3">
+                                         <div className="w-10 h-10 bg-white border border-slate-200 text-brand-primary rounded-xl flex items-center justify-center font-black shadow-sm group-hover:scale-110 transition-transform">
+                                           {p.userName.charAt(0)}
+                                         </div>
+                                         <div>
+                                           <h4 className="font-bold text-slate-900 leading-none">{p.userName}</h4>
+                                           <p className="text-[10px] text-slate-400 mt-1">{p.feeName} — Term {p.termIndex + 1}, {p.year}</p>
+                                         </div>
+                                       </div>
+                                       <div className="grid grid-cols-2 gap-8">
+                                         <div>
+                                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">TX Details</span>
+                                           <span className="text-xs font-mono text-slate-600 font-bold">{p.transactionDetails}</span>
+                                         </div>
+                                         <div>
+                                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Amount Paid</span>
+                                           <span className="text-sm font-black text-slate-900 tracking-tighter">৳{p.amount}</span>
+                                         </div>
+                                       </div>
+                                     </div>
+                                     <div className="flex items-center gap-3 shrink-0">
+                                       <button 
+                                         onClick={() => handleApprovePayment(p)}
+                                         className="px-7 py-3 bg-green-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center gap-2"
+                                       >
+                                         <Check size={16} strokeWidth={3} /> Approve
+                                       </button>
+                                       <button 
+                                         onClick={() => handleRejectPayment(p.id)}
+                                         className="px-7 py-3 bg-white border border-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:border-red-200 active:scale-95 transition-all flex items-center gap-2"
+                                       >
+                                         <X size={16} strokeWidth={3} /> Reject
+                                       </button>
+                                     </div>
+                                   </div>
+                                 ))}
+                                 {paymentSubmissions.filter(p => p.status === 'pending').length === 0 && (
+                                   <div className="py-8 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 text-center text-slate-300 italic text-xs">
+                                     No fee payment submissions.
+                                   </div>
+                                 )}
                                </div>
-                             )}
-                           </div>
+                             </div>
+                           )}
                          </div>
-                       )}
+                      </div>
+                    </div>
 
                        {/* Full User List for Admin */}
                        {isAdmin && (
@@ -4793,7 +6408,6 @@ export default function App() {
                          </div>
                        )}
                     </div>
-                  </div>
                 ) : null}
               </div>
             </div>
@@ -5059,9 +6673,9 @@ export default function App() {
               <div className="space-y-0.5">
                 <div className="flex items-center gap-2">
                   <div className="h-[2px] w-5 bg-brand-primary" />
-                  <span className="text-[8px] font-bold uppercase tracking-widest text-brand-primary">Directory</span>
+                  <span className="text-[8px] font-bold uppercase tracking-widest text-brand-primary">Member</span>
                 </div>
-                <h2 className="text-xl md:text-2xl font-display font-medium text-slate-900 italic font-bold leading-none">Member Network</h2>
+                <h2 className="text-xl md:text-2xl font-display font-medium text-slate-900 italic font-bold leading-none">Our All Association Member List</h2>
               </div>
 
               <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto flex-1 md:max-w-xl justify-end">
@@ -5124,15 +6738,32 @@ export default function App() {
                     </div>
 
                     <div className="px-2 pb-3 flex flex-col items-center text-center">
-                      <h3 className="font-display font-bold text-[13px] text-slate-900 mb-0.5 group-hover:text-brand-primary transition-colors line-clamp-1 leading-tight">
-                        {member.name}
-                      </h3>
+                      <div className="flex flex-col items-center gap-0.5 mb-1.5">
+                        <h3 className="font-display font-bold text-[13px] text-slate-900 group-hover:text-brand-primary transition-colors line-clamp-1 leading-tight">
+                          {member.name}
+                        </h3>
+                        {member.memberCode && (
+                          <span className="text-[9px] font-black text-brand-primary/60 uppercase tracking-widest">
+                            {member.memberCode}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-slate-500 text-[10px] mb-2 line-clamp-1 font-medium">
+                        {member.designation && <span className="block italic opacity-80 truncate">{member.designation}</span>}
                         {member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}
                       </div>
-                      <div className="inline-flex items-center justify-center px-3 py-0.5 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter">
+                      <div className="inline-flex items-center justify-center px-3 py-0.5 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter mb-3">
                         Session: {member.session || 'N/A'}
                       </div>
+
+                      {member.phone && (
+                        <div className="flex items-center justify-center gap-1.5 text-slate-500 font-bold text-[10px] mt-auto w-full pt-2 border-t border-slate-50">
+                          <Phone size={10} className="text-brand-primary" />
+                          <a href={`tel:${member.phone}`} className="hover:text-brand-primary transition-colors">
+                            {member.phone}
+                          </a>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 ))}
@@ -5164,24 +6795,55 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-16">
+      <footer className="bg-white border-t border-slate-200 py-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid md:grid-cols-4 gap-12">
           <div className="col-span-2">
             <div className="flex items-center gap-3 mb-6">
-              <div className="bg-brand-primary p-2 rounded-lg">
-                <Cpu className="text-white w-6 h-6" />
-              </div>
+              {associationConfig.logoUrl ? (
+                <img src={associationConfig.logoUrl} alt="Logo" className="h-10 w-auto object-contain" />
+              ) : (
+                <div className="bg-brand-primary p-2 rounded-lg">
+                  <Cpu className="text-white w-6 h-6" />
+                </div>
+              )}
               <span className="font-display font-bold text-xl text-brand-primary">
                 EDEA RANGPUR
               </span>
             </div>
             <p className="text-slate-500 max-w-sm mb-6">
-              The leading association for electromedical diploma engineers in the Rangpur region. Dedicated to professional growth and technical excellence.
+              {associationConfig.footerDescription || 'The leading association for electromedical diploma engineers in the Rangpur region. Dedicated to professional growth and technical excellence.'}
             </p>
-            <div className="flex gap-4">
-              <a href="#" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all"><Users size={18} /></a>
-              <a href="#" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all"><Mail size={18} /></a>
-              <a href="#" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all"><Phone size={18} /></a>
+            <div className="flex flex-wrap gap-4">
+              {associationConfig.socialLinks?.facebook && associationConfig.socialLinks.facebook.trim() !== '' && (
+                <a href={associationConfig.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all shadow-sm">
+                  <Facebook size={18} />
+                </a>
+              )}
+              {associationConfig.socialLinks?.linkedin && associationConfig.socialLinks.linkedin.trim() !== '' && (
+                <a href={associationConfig.socialLinks.linkedin} target="_blank" rel="noopener noreferrer" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all shadow-sm">
+                  <Linkedin size={18} />
+                </a>
+              )}
+              {associationConfig.socialLinks?.twitter && associationConfig.socialLinks.twitter.trim() !== '' && (
+                <a href={associationConfig.socialLinks.twitter} target="_blank" rel="noopener noreferrer" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all shadow-sm">
+                  <Twitter size={18} />
+                </a>
+              )}
+              {associationConfig.socialLinks?.instagram && associationConfig.socialLinks.instagram.trim() !== '' && (
+                <a href={associationConfig.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all shadow-sm">
+                  <Instagram size={18} />
+                </a>
+              )}
+              {associationConfig.socialLinks?.whatsapp && associationConfig.socialLinks.whatsapp.trim() !== '' && (
+                <a href={associationConfig.socialLinks.whatsapp} target="_blank" rel="noopener noreferrer" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all shadow-sm">
+                  <MessageCircle size={18} />
+                </a>
+              )}
+              {associationConfig.socialLinks?.youtube && associationConfig.socialLinks.youtube.trim() !== '' && (
+                <a href={associationConfig.socialLinks.youtube} target="_blank" rel="noopener noreferrer" className="p-3 bg-slate-100 rounded-xl text-slate-600 hover:bg-brand-primary hover:text-white transition-all shadow-sm">
+                  <Youtube size={18} />
+                </a>
+              )}
             </div>
           </div>
           
@@ -5195,6 +6857,7 @@ export default function App() {
                     setShowFullCommittee(false); 
                     setSelectedProgram(null);
                     setShowAllMembers(false);
+                    setShowNoticesView(false);
                     window.scrollTo({ top: 0, behavior: 'smooth' }); 
                   }} 
                   className="hover:text-brand-primary transition-colors"
@@ -5208,6 +6871,7 @@ export default function App() {
                     setShowAllProgramsView(true);
                     setShowFullCommittee(false);
                     setShowAllMembers(false);
+                    setShowNoticesView(false);
                     setSelectedProgram(null);
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }} 
@@ -5222,6 +6886,7 @@ export default function App() {
                     setShowAllMembers(true);
                     setShowAllProgramsView(false);
                     setShowFullCommittee(false);
+                    setShowNoticesView(false);
                     setSelectedProgram(null);
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }} 
@@ -5237,6 +6902,7 @@ export default function App() {
                     setShowFullCommittee(true);
                     setShowAllProgramsView(false);
                     setShowAllMembers(false);
+                    setShowNoticesView(false);
                     setSelectedProgram(null);
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }} 
@@ -5253,24 +6919,34 @@ export default function App() {
             <ul className="space-y-4 text-sm text-slate-500">
               <li className="flex items-start gap-3">
                 <MapPin size={18} className="text-brand-secondary shrink-0" />
-                <span>Rangpur Medical College Road, Rangpur, Bangladesh</span>
+                <span>{associationConfig.officeAddress || 'Rangpur Medical College Road, Rangpur, Bangladesh'}</span>
               </li>
               <li className="flex items-center gap-3">
                 <Mail size={18} className="text-brand-secondary shrink-0" />
-                <span>info@edea-rangpur.org</span>
+                <span>{associationConfig.contactEmail || 'info@edea-rangpur.org'}</span>
               </li>
               <li className="flex items-center gap-3">
                 <Phone size={18} className="text-brand-secondary shrink-0" />
-                <span>+880 1234 567890</span>
+                <span>{associationConfig.contactPhone || '+880 1234 567890'}</span>
               </li>
             </ul>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-100 mt-16 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-slate-400 text-xs">
-          <p>© 2024 Electromedical Diploma Engineers Association, Rangpur. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Electromedical Diploma Engineers Association, Rangpur. All rights reserved.</p>
           <div className="flex gap-8">
-            <a href="#" className="hover:text-slate-600 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-slate-600 transition-colors">Terms of Service</a>
+            <button 
+              onClick={() => setShowPrivacyPolicy(true)} 
+              className="hover:text-slate-600 transition-colors cursor-pointer"
+            >
+              Privacy Policy
+            </button>
+            <button 
+              onClick={() => setShowTermsOfService(true)} 
+              className="hover:text-slate-600 transition-colors cursor-pointer"
+            >
+              Terms of Service
+            </button>
           </div>
         </div>
       </footer>
@@ -5505,6 +7181,355 @@ export default function App() {
                       )}
                     </div>
                   )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Fee Payment Modal */}
+      <AnimatePresence>
+        {showPaymentModal && selectedFeeForPayment && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPaymentModal(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 border-b border-slate-50">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xl font-display font-bold text-slate-900 italic">Submit Fee Payment</h3>
+                  <button onClick={() => setShowPaymentModal(false)} className="p-2 hover:bg-slate-50 rounded-xl transition-all">
+                    <X size={20} className="text-slate-400" />
+                  </button>
+                </div>
+                <p className="text-slate-500 text-sm">Please provide transaction details for the selected term(s).</p>
+              </div>
+
+              <form onSubmit={handleFeePaymentSubmit} className="p-8 space-y-6">
+                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-3">
+                  <div className="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    <span>Fee Structure</span>
+                    <span>Amount per term</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-slate-900">{selectedFeeForPayment.name}</span>
+                    <span className="font-mono font-bold text-brand-primary">{selectedFeeForPayment.amount} BDT</span>
+                  </div>
+                  
+                  <div className="pt-3 border-t border-slate-200">
+                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Paying for:</div>
+                    {paymentForm.selectedTerms.map((t, idx) => (
+                      <div key={idx} className="text-xs font-bold text-slate-600">
+                        Term {t.termIndex + 1} - {selectedFeeForPayment.terms[t.termIndex].timeline} ({t.year})
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-900">Total Amount</span>
+                    <span className="text-xl font-display font-bold text-brand-primary italic">
+                      {selectedFeeForPayment.amount * paymentForm.selectedTerms.length} BDT
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="p-4 bg-brand-primary/5 rounded-2xl border border-brand-primary/10">
+                    <p className="text-xs font-bold text-brand-primary mb-2">Payment Instructions:</p>
+                    <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
+                      Send the total amount to bKash: <span className="font-mono font-bold select-all">{membershipSettings?.bkashNumber || '017XXXXXXXX'}</span> (Personal). 
+                      Include your name in the reference if possible. Paste the Transaction ID below.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Transaction ID / Details *</label>
+                    <textarea 
+                      required
+                      value={paymentForm.transactionDetails}
+                      onChange={(e) => setPaymentForm({...paymentForm, transactionDetails: e.target.value})}
+                      placeholder="e.g. bKash: 7XJ9W... or Bank Transfer Ref..."
+                      className="w-full h-24 p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-sm"
+                    />
+                  </div>
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={submittingPayment}
+                  className="w-full bg-slate-900 text-white py-4 rounded-xl font-black uppercase tracking-widest text-xs shadow-xl shadow-slate-900/10 hover:bg-brand-primary hover:shadow-brand-primary/20 transition-all flex items-center justify-center gap-2 active:scale-95"
+                >
+                  {submittingPayment ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+                  Confirm & Submit Payment
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Member Analysis Detail Modal */}
+      <AnimatePresence>
+        {selectedAnalysisUser && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedAnalysisUser(null)}
+              className="absolute inset-0 bg-slate-900/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-4xl bg-white rounded-[3rem] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+            >
+              <div className="p-8 border-b border-slate-50 flex items-center justify-between shrink-0 bg-slate-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center text-brand-primary">
+                    <Users size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-xl text-slate-900 leading-none">Member Analysis Profile</h3>
+                    <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-2">Administrative View</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedAnalysisUser(null)}
+                  className="p-2 text-slate-300 hover:text-slate-900 transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="p-10 overflow-y-auto custom-scrollbar space-y-12">
+                <div className="grid md:grid-cols-3 gap-12">
+                  <div className="flex flex-col items-center text-center space-y-4">
+                    <div className="w-32 h-32 rounded-[2.5rem] overflow-hidden border-4 border-white shadow-xl shadow-slate-200/50">
+                      <img 
+                        src={selectedAnalysisUser.profilePicture || selectedAnalysisUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedAnalysisUser.name)}&background=random`} 
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-lg">{selectedAnalysisUser.name}</h4>
+                      <p className="text-xs text-brand-primary font-black uppercase tracking-widest mt-1">{selectedAnalysisUser.memberCode || 'NO ID'}</p>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 grid sm:grid-cols-2 gap-8">
+                    <div className="space-y-4">
+                      <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Personal Details</h5>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                          <Mail size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">{selectedAnalysisUser.email}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Phone size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">{selectedAnalysisUser.phone || 'Not Provided'}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Calendar size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">Session: {selectedAnalysisUser.session || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <ShieldCheck size={14} className="text-slate-300" />
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg ${selectedAnalysisUser.membershipStatus === 'approved' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
+                            Status: {(selectedAnalysisUser.membershipStatus || 'unpaid').replace('_', ' ')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Professional Details</h5>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                          <Briefcase size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">Designation: {selectedAnalysisUser.designation || 'Engineer'}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Building2 size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">Workplace: {selectedAnalysisUser.companyName || selectedAnalysisUser.workplace || 'Not Specified'}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <GraduationCap size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">Institution: {selectedAnalysisUser.institution || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <MapPin size={14} className="text-slate-300" />
+                          <span className="text-sm text-slate-600">Blood Group: {selectedAnalysisUser.bloodGroup || 'N/A'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6 pt-12 border-t border-slate-100">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-blue-50 rounded-xl flex items-center justify-center text-blue-500">
+                        <CreditCard size={18} />
+                      </div>
+                      <h5 className="font-bold text-slate-900 italic">Financial Analysis & Payment History</h5>
+                    </div>
+                    
+                    {/* Financial Summary Cards */}
+                    <div className="flex items-center gap-2">
+                      <div className="bg-green-50 border border-green-100 px-3 py-2 rounded-xl text-center min-w-[70px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-green-600 opacity-70">Total Paid</p>
+                        <p className="text-xs font-black text-green-700">
+                          ৳{memberAnalysisProfileHistory.filter((p: any) => p.status === 'confirmed' || p.status === 'approved').reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)}
+                        </p>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-100 px-3 py-2 rounded-xl text-center min-w-[70px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-amber-600 opacity-70">Pending</p>
+                        <p className="text-xs font-black text-amber-700">
+                          ৳{memberAnalysisProfileHistory.filter((p: any) => p.status === 'pending').reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)}
+                        </p>
+                      </div>
+                      {selectedAnalysisUser.membershipStatus !== 'approved' && (
+                        <div className="bg-red-50 border border-red-100 px-3 py-2 rounded-xl text-center min-w-[70px]">
+                          <p className="text-[8px] font-black uppercase tracking-widest text-red-600 opacity-70">Due (Reg)</p>
+                          <p className="text-xs font-black text-red-700">
+                            ৳{membershipSettings?.membershipAmount || 100}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {memberAnalysisProfileHistory.length > 0 ? (
+                    <div className="overflow-hidden bg-white border border-slate-100 rounded-3xl shadow-sm">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50/50">
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Payment For</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Date</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Amount</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {memberAnalysisProfileHistory.map((payment, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/30 transition-colors">
+                              <td className="px-6 py-5">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center text-blue-500">
+                                    <Receipt size={14} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-900">{payment.type} {payment.type.toLowerCase().includes('fee') ? '' : 'Fee'}</p>
+                                    <p className="text-[9px] text-slate-400 font-medium">via {payment.method} • {payment.transactionId || 'No Ref'}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-5 text-center">
+                                <span className="text-[10px] font-bold text-slate-500">{payment.date}</span>
+                              </td>
+                              <td className="px-6 py-5 text-center">
+                                <span className="text-xs font-black text-slate-900">৳{payment.amount}</span>
+                              </td>
+                              <td className="px-6 py-5 text-right">
+                                <span className={`inline-flex px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${
+                                  payment.status === 'confirmed' || payment.status === 'approved' 
+                                    ? 'bg-green-100 text-green-600' 
+                                    : 'bg-amber-100 text-amber-600'
+                                }`}>
+                                  {payment.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-12 text-center bg-slate-50 rounded-[2.5rem] border border-dashed border-slate-200">
+                      <CreditCard size={32} className="mx-auto text-slate-200 mb-4" />
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">No transaction history found.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+                <button 
+                  onClick={() => setSelectedAnalysisUser(null)}
+                  className="px-10 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary transition-all shadow-lg active:scale-95"
+                >
+                  Close Profile
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Info Modals (Privacy & Terms) */}
+      <AnimatePresence>
+        {(showPrivacyPolicy || showTermsOfService) && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => { setShowPrivacyPolicy(false); setShowTermsOfService(false); }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+            >
+              <div className="p-8 border-b border-slate-50 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-brand-primary/10 rounded-2xl flex items-center justify-center text-brand-primary">
+                    <ShieldCheck size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-xl text-slate-900 leading-none">
+                      {showPrivacyPolicy ? 'Privacy Policy' : 'Terms of Service'}
+                    </h3>
+                    <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-2 italic">Legal Information</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => { setShowPrivacyPolicy(false); setShowTermsOfService(false); }}
+                  className="p-2 text-slate-300 hover:text-slate-900 transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="p-10 overflow-y-auto custom-scrollbar">
+                <div className="whitespace-pre-wrap text-slate-600 text-sm leading-relaxed font-regular">
+                  {showPrivacyPolicy 
+                    ? (associationConfig.privacyPolicy || "Sample Privacy Policy\n\nYour privacy is important to us. This policy explains how Electromedical Diploma Engineers Association, Rangpur collects and uses your information.\n\n1. Data Collection: We collect information you provide when registering as a member.\n2. Usage: Your data is used for association member management and communication.\n3. Security: We implement industry-standard security to protect your data.") 
+                    : (associationConfig.termsOfService || "Sample Terms of Service\n\nWelcome to EDEA Rangpur. By using our portal, you agree to these terms.\n\n1. Membership: Membership is subject to approval by the executive committee.\n2. Fees: Membership fees are non-refundable once approved.\n3. Conduct: Members must adhere to the high ethical standards of the profession.")
+                  }
+                </div>
+              </div>
+              
+              <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+                <button 
+                  onClick={() => { setShowPrivacyPolicy(false); setShowTermsOfService(false); }}
+                  className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary transition-all shadow-lg active:scale-95"
+                >
+                  Understood
+                </button>
               </div>
             </motion.div>
           </div>
