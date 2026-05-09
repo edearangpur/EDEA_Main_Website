@@ -36,6 +36,7 @@ import {
   Save,
   ShieldCheck,
   Plus,
+  PlusCircle,
   Minus,
   Trash2,
   Info,
@@ -100,6 +101,8 @@ interface Program {
   category?: string;
   location?: string;
   status?: 'upcoming' | 'completed';
+  registrationFee?: number;
+  registrationDeadline?: string;
 }
 
 interface AssociationConfig {
@@ -554,7 +557,7 @@ export default function App() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [executiveMembers, setExecutiveMembers] = useState<any[]>([]);
-  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding'>('general');
+  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding' | 'create_program'>('general');
   const [isAddingProgram, setIsAddingProgram] = useState(false);
   const [isAddingNotice, setIsAddingNotice] = useState(false);
   const [ecMemberForm, setEcMemberForm] = useState({ role: '', userId: '' });
@@ -1074,13 +1077,15 @@ export default function App() {
   const [programForm, setProgramForm] = useState({
     title: '',
     category: '',
-    date: '',
+    date: new Date().toISOString().split('T')[0],
     location: '',
     description: '',
     image: '',
     status: 'upcoming' as 'upcoming' | 'completed',
     details: '',
     featured: false,
+    registrationFee: 0,
+    registrationDeadline: new Date().toISOString().split('T')[0],
     highlights: [] as string[],
     gallery: [] as string[],
     budget: {
@@ -1439,14 +1444,14 @@ export default function App() {
 
   const handleSaveNotice = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !isAdmin) return;
+    if (!isAdmin && specializedRole !== 'secretary') return;
 
     const path = 'notices';
     try {
       const data = {
         ...noticeForm,
         updatedAt: serverTimestamp(),
-        updatedBy: user.uid
+        updatedBy: user?.uid || (specializedRole ? `specialized_${specializedRole}` : 'system')
       };
 
       if (editingNotice) {
@@ -1475,7 +1480,7 @@ export default function App() {
   };
 
   const handleDeleteNotice = async (id: string) => {
-    if (!isAdmin || !confirm('Are you sure you want to delete this notice?')) return;
+    if ((!isAdmin && specializedRole !== 'secretary') || !confirm('Are you sure you want to delete this notice?')) return;
     try {
       await deleteDoc(doc(db, 'notices', id));
     } catch (error) {
@@ -1486,10 +1491,10 @@ export default function App() {
   const openEditNotice = (n: Notice) => {
     setEditingNotice(n);
     setNoticeForm({
-      title: n.title,
-      category: n.category,
-      date: n.date,
-      description: n.description,
+      title: n.title || '',
+      category: n.category || 'General',
+      date: n.date || new Date().toISOString().split('T')[0],
+      description: n.description || '',
       fbLink: n.fbLink || '',
       image: n.image || ''
     });
@@ -1515,7 +1520,7 @@ export default function App() {
   };
 
   const handleSaveConfig = async () => {
-    if (!user || !isAdmin) return;
+    if (!isAdmin && specializedRole !== 'admin') return;
     
     const path = 'config/association';
     try {
@@ -1529,7 +1534,7 @@ export default function App() {
         manualMemberCount: editManualMemberCount,
         logoUrl: editLogoUrl,
         updatedAt: serverTimestamp(),
-        updatedBy: user.uid
+        updatedBy: user?.uid || (specializedRole ? `specialized_${specializedRole}` : 'system')
       });
       setIsEditingConfig(false);
       setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Association settings updated successfully!' });
@@ -1629,7 +1634,7 @@ export default function App() {
   };
 
   const handleSaveBranding = async () => {
-    if (!user || !isAdmin) return;
+    if (!isAdmin && specializedRole !== 'admin') return;
     const path = 'config/association';
     try {
       await setDoc(doc(db, 'config', 'association'), {
@@ -1643,7 +1648,7 @@ export default function App() {
         termsOfService: editTermsOfService,
         socialLinks: editSocialLinks,
         updatedAt: serverTimestamp(),
-        updatedBy: user.uid
+        updatedBy: user?.uid || (specializedRole ? `specialized_${specializedRole}` : 'system')
       });
       setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Branding & Footer updated successfully!' });
       setTimeout(() => setSaveStatus(null), 3000);
@@ -1653,7 +1658,7 @@ export default function App() {
   };
 
   const handleSavePortal = async () => {
-    if (!user || !isAdmin) return;
+    if (!isAdmin && specializedRole !== 'admin' && specializedRole !== 'secretary') return;
     
     const path = 'config/portal';
     try {
@@ -1661,7 +1666,7 @@ export default function App() {
       await setDoc(doc(db, 'config', 'portal'), {
         ...editPortal,
         updatedAt: serverTimestamp(),
-        updatedBy: user.uid
+        updatedBy: user?.uid || (specializedRole ? `specialized_${specializedRole}` : 'system')
       });
       
       // Save Member Count to Association Config
@@ -1743,14 +1748,14 @@ export default function App() {
 
   const handleSaveProgram = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !isAdmin) return;
+    if (!isAdmin && specializedRole !== 'secretary') return;
 
     const path = 'programs';
     try {
       const pData = {
         ...programForm,
         updatedAt: serverTimestamp(),
-        updatedBy: user.uid
+        updatedBy: user?.uid || (specializedRole ? `specialized_${specializedRole}` : 'system')
       };
 
       if (editingProgram) {
@@ -1768,7 +1773,7 @@ export default function App() {
       setProgramForm({ 
         title: '', 
         category: '', 
-        date: '', 
+        date: new Date().toISOString().split('T')[0], 
         location: '', 
         description: '', 
         image: '', 
@@ -1777,7 +1782,9 @@ export default function App() {
         featured: false,
         highlights: [],
         gallery: [],
-        budget: { income: [], expense: [] }
+        budget: { income: [], expense: [] },
+        registrationFee: 0,
+        registrationDeadline: new Date().toISOString().split('T')[0]
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
@@ -1785,7 +1792,7 @@ export default function App() {
   };
 
   const handleDeleteProgram = async (id: string) => {
-    if (!user || !isAdmin || !confirm('Are you sure you want to delete this program?')) return;
+    if ((!isAdmin && specializedRole !== 'secretary') || !confirm('Are you sure you want to delete this program?')) return;
     try {
       await deleteDoc(doc(db, 'programs', id));
     } catch (error) {
@@ -1796,18 +1803,20 @@ export default function App() {
   const openEditProgram = (p: Program) => {
     setEditingProgram(p);
     setProgramForm({
-      title: p.title,
+      title: p.title || '',
       category: p.category || '',
-      date: p.date,
+      date: p.date || new Date().toISOString().split('T')[0],
       location: p.location || '',
-      description: p.description,
-      image: p.image,
+      description: p.description || '',
+      image: p.image || '',
       status: p.status || 'upcoming',
-      details: p.details,
+      details: p.details || '',
       featured: p.featured || false,
       highlights: p.highlights || [],
       gallery: p.gallery || [],
-      budget: p.budget || { income: [], expense: [] }
+      budget: p.budget || { income: [], expense: [] },
+      registrationFee: p.registrationFee || 0,
+      registrationDeadline: p.registrationDeadline || new Date().toISOString().split('T')[0]
     });
     setIsAddingProgram(true);
   };
@@ -2500,9 +2509,17 @@ export default function App() {
 
                   {/* Carousel Content */}
                   <div className="p-8 lg:p-12 flex flex-col justify-center bg-white relative h-full">
-                    <div className="flex items-center gap-2 text-brand-secondary text-sm font-bold mb-4">
-                      <Calendar size={18} />
-                      {programs[currentProgramIndex]?.date}
+                    <div className="flex items-center gap-3 mb-6">
+                      {(programs[currentProgramIndex]?.status === 'upcoming' || !programs[currentProgramIndex]?.status) && (
+                        <span className="px-3 py-1 bg-brand-primary text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-full shadow-lg shadow-brand-primary/20 flex items-center gap-1.5 animate-pulse">
+                          <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                          Upcoming
+                        </span>
+                      )}
+                      <div className="flex items-center gap-2 text-brand-secondary text-sm font-bold opacity-80">
+                        <Calendar size={16} />
+                        {programs[currentProgramIndex]?.date}
+                      </div>
                     </div>
                     
                     <h3 className="text-3xl font-display font-bold text-slate-900 mb-6 italic">
@@ -2513,27 +2530,55 @@ export default function App() {
                       {programs[currentProgramIndex]?.description}
                     </p>
 
-                    <div className="space-y-4 mb-10">
-                      <div className="flex items-center gap-3 text-sm text-slate-500">
-                        <div className="w-1.5 h-1.5 rounded-full bg-brand-accent" />
-                        Interactive Technical Sessions
+                    {/* Program Info Grid */}
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-8">
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1">
+                           <Calendar size={10} className="text-brand-secondary" /> Date
+                        </div>
+                        <div className="text-sm font-bold text-slate-700">{programs[currentProgramIndex]?.date}</div>
                       </div>
-                      <div className="flex items-center gap-3 text-sm text-slate-500">
-                        <div className="w-1.5 h-1.5 rounded-full bg-brand-accent" />
-                        Professional Networking
-                      </div>
-                      <div className="flex items-center gap-3 text-sm text-slate-500">
-                        <div className="w-1.5 h-1.5 rounded-full bg-brand-accent" />
-                        Expert Guidance
-                      </div>
+                      
+                      {programs[currentProgramIndex]?.registrationFee !== undefined && (
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1">
+                             <CreditCard size={10} className="text-brand-primary" /> Fee
+                          </div>
+                          <div className="text-sm font-bold text-brand-primary">৳ {programs[currentProgramIndex]?.registrationFee}</div>
+                        </div>
+                      )}
+
+                      {programs[currentProgramIndex]?.registrationDeadline && (
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1">
+                             <Clock size={10} className="text-brand-accent" /> Last Date
+                          </div>
+                          <div className="text-sm font-bold text-slate-700">{programs[currentProgramIndex]?.registrationDeadline}</div>
+                        </div>
+                      )}
                     </div>
 
-                    <button 
-                      onClick={() => setSelectedProgram(programs[currentProgramIndex])}
-                      className="w-fit bg-brand-primary text-white px-8 py-3 rounded-xl font-bold hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20 flex items-center gap-2"
-                    >
-                      View Full Details <ChevronRight size={18} />
-                    </button>
+                    {/* Show actual highlights if they exist */}
+                    {programs[currentProgramIndex]?.highlights && programs[currentProgramIndex]!.highlights!.length > 0 && (
+                      <div className="space-y-2 mb-10">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Program Highlights</p>
+                        {programs[currentProgramIndex]!.highlights!.map((item, i) => (
+                          <div key={i} className="flex items-center gap-3 text-sm text-slate-500">
+                            <div className="w-1 h-1 rounded-full bg-brand-accent" />
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-auto">
+                      <button 
+                        onClick={() => setSelectedProgram(programs[currentProgramIndex])}
+                        className="w-full lg:w-fit bg-brand-primary text-white px-8 py-4 rounded-xl font-bold hover:bg-brand-primary/95 transition-all shadow-lg shadow-brand-primary/20 flex items-center justify-center lg:justify-start gap-2 active:scale-95"
+                      >
+                        View Full Details <ChevronRight size={18} />
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               </AnimatePresence>
@@ -2618,8 +2663,13 @@ export default function App() {
                     alt={program.title} 
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2000ms]" 
                   />
-                  <div className="absolute top-4 left-4">
-                    <span className="px-3 py-1 bg-white/90 backdrop-blur-sm text-brand-primary rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm">
+                  <div className="absolute top-4 left-4 flex flex-col gap-2">
+                    {(program.status === 'upcoming' || !program.status) && (
+                      <span className="w-fit px-3 py-1 bg-brand-primary text-white rounded-full text-[8px] font-bold uppercase tracking-widest shadow-md">
+                        Upcoming
+                      </span>
+                    )}
+                    <span className="px-3 py-1 bg-white/90 backdrop-blur-sm text-brand-primary rounded-full text-[8px] font-black uppercase tracking-widest shadow-sm border border-slate-100">
                       {program.category}
                     </span>
                   </div>
@@ -2630,17 +2680,35 @@ export default function App() {
                   </div>
                 </div>
                 
-                <div className="p-6 text-left space-y-3">
-                  <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-                    <Calendar size={12} className="text-brand-primary/50" />
-                    {program.date}
-                  </div>
-                  <h4 className="text-lg font-display font-bold text-slate-800 line-clamp-1 leading-tight group-hover:text-brand-primary transition-colors">
-                    {program.title}
-                  </h4>
-                  <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                    {program.description}
-                  </p>
+                  <div className="p-6 text-left space-y-3">
+                    <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+                      <Calendar size={12} className="text-brand-primary/50" />
+                      {program.date}
+                    </div>
+                    <h4 className="text-lg font-display font-bold text-slate-800 line-clamp-1 leading-tight group-hover:text-brand-primary transition-colors">
+                      {program.title}
+                    </h4>
+                    
+                    {(program.status === 'upcoming' || !program.status) && (
+                      <div className="flex flex-wrap gap-2 py-1">
+                        {program.registrationFee !== undefined && (
+                          <div className="flex items-center gap-1 px-2 py-1 bg-brand-primary/5 text-brand-primary rounded-lg border border-brand-primary/10">
+                            <CreditCard size={10} />
+                            <span className="text-[9px] font-bold uppercase">৳ {program.registrationFee}</span>
+                          </div>
+                        )}
+                        {program.registrationDeadline && (
+                          <div className="flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-500 rounded-lg border border-slate-100">
+                            <Clock size={10} />
+                            <span className="text-[9px] font-bold uppercase">Till {program.registrationDeadline}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+                      {program.description}
+                    </p>
                   
                   <div className="pt-4 flex items-center justify-between border-t border-slate-50">
                     <div className="flex items-center gap-1.5 text-slate-400">
@@ -4081,13 +4149,6 @@ export default function App() {
                       <span className="font-bold text-sm">General Settings</span>
                     </button>
                     <button 
-                      onClick={() => setAdminTab('programs')}
-                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'programs' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                    >
-                      <Calendar size={18} />
-                      <span className="font-bold text-sm">Program Management</span>
-                    </button>
-                    <button 
                       onClick={() => setAdminTab('portal')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'portal' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
                     >
@@ -4157,6 +4218,16 @@ export default function App() {
                         </span>
                       );
                     })()}
+                  </button>
+                )}
+
+                {specializedRole === 'secretary' && (
+                  <button 
+                    onClick={() => setAdminTab('create_program')}
+                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'create_program' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                  >
+                    <PlusCircle size={18} />
+                    <span className="font-bold text-sm">Create Program</span>
                   </button>
                 )}
 
@@ -6213,7 +6284,7 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                ) : adminTab === 'programs' ? (
+                ) : (adminTab === 'programs' || adminTab === 'create_program') ? (
                   <div className="space-y-6">
                     {isAddingProgram ? (
                       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -6258,11 +6329,11 @@ export default function App() {
                             <div className="space-y-2">
                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</label>
                               <input 
+                                type="date"
                                 required
                                 value={programForm.date}
                                 onChange={(e) => setProgramForm({...programForm, date: e.target.value})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                                placeholder="e.g. May 15, 2024"
+                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold"
                               />
                             </div>
                             <div className="space-y-2">
@@ -6275,16 +6346,27 @@ export default function App() {
                                 placeholder="e.g. RMCH Conference Hall"
                               />
                             </div>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-6">
                             <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</label>
-                              <select 
-                                value={programForm.status}
-                                onChange={(e) => setProgramForm({...programForm, status: e.target.value as 'upcoming' | 'completed'})}
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registration Fee (৳)</label>
+                              <input 
+                                type="number"
+                                value={programForm.registrationFee || 0}
+                                onChange={(e) => setProgramForm({...programForm, registrationFee: parseFloat(e.target.value) || 0})}
+                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold"
+                                placeholder="0.00"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registration Last Date</label>
+                              <input 
+                                type="date"
+                                value={programForm.registrationDeadline}
+                                onChange={(e) => setProgramForm({...programForm, registrationDeadline: e.target.value})}
                                 className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                              >
-                                <option value="upcoming">Upcoming</option>
-                                <option value="completed">Completed</option>
-                              </select>
+                              />
                             </div>
                           </div>
 
@@ -6333,168 +6415,6 @@ export default function App() {
                                   {isUploading === 'main' ? 'Uploading...' : 'Direct Image Upload'}
                                 </label>
                                 <p className="text-[10px] text-slate-400">Choose a high-quality cover photo for the program card.</p>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="flex justify-between items-end">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Short Description (for cards)</label>
-                              <span className={`text-[10px] font-bold ${programForm.description.length > 150 ? 'text-red-500' : 'text-slate-300'}`}>
-                                {programForm.description.length}/150
-                              </span>
-                            </div>
-                            <textarea 
-                              required
-                              value={programForm.description}
-                              onChange={(e) => setProgramForm({...programForm, description: e.target.value.slice(0, 200)})}
-                              className="w-full h-24 p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                              placeholder="Brief summary (supports bullet points: • Item)..."
-                            />
-                            <p className="text-[10px] text-slate-400">Recommended: keeping under 150 characters for best display on cards.</p>
-                          </div>
-
-                          <div className="space-y-4">
-                            <div className="bg-brand-primary/5 p-6 rounded-[2rem] border border-brand-primary/10">
-                              <h4 className="text-xs font-black uppercase tracking-[0.2em] text-brand-primary mb-6 flex items-center gap-3">
-                                <FileText size={16} />
-                                Financial Statement (Income & Expense)
-                              </h4>
-                              
-                              <div className="grid md:grid-cols-2 gap-8">
-                                {/* Income Section */}
-                                <div className="space-y-4">
-                                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Income Sources</label>
-                                  <div className="space-y-2">
-                                    {(programForm.budget?.income || []).map((item, idx) => (
-                                      <div key={idx} className="flex gap-2">
-                                        <input 
-                                          type="text"
-                                          placeholder="Source"
-                                          value={item.item}
-                                          onChange={(e) => {
-                                            const budget = programForm.budget || { income: [], expense: [] };
-                                            const newIncome = [...(budget.income || [])];
-                                            newIncome[idx] = { ...newIncome[idx], item: e.target.value };
-                                            setProgramForm({...programForm, budget: {...budget, income: newIncome}});
-                                          }}
-                                          className="flex-1 p-3 bg-white border border-slate-100 rounded-lg text-xs"
-                                        />
-                                        <input 
-                                          type="number"
-                                          placeholder="Amount"
-                                          value={item.amount}
-                                          onChange={(e) => {
-                                            const budget = programForm.budget || { income: [], expense: [] };
-                                            const newIncome = [...(budget.income || [])];
-                                            newIncome[idx] = { ...newIncome[idx], amount: Number(e.target.value) };
-                                            setProgramForm({...programForm, budget: {...budget, income: newIncome}});
-                                          }}
-                                          className="w-24 p-3 bg-white border border-slate-100 rounded-lg text-xs"
-                                        />
-                                        <button 
-                                          type="button"
-                                          onClick={() => {
-                                            const budget = programForm.budget || { income: [], expense: [] };
-                                            const newIncome = (budget.income || []).filter((_, i) => i !== idx);
-                                            setProgramForm({...programForm, budget: {...budget, income: newIncome}});
-                                          }}
-                                          className="p-3 text-red-400 hover:text-red-600"
-                                        >
-                                          <Trash2 size={16} />
-                                        </button>
-                                      </div>
-                                    ))}
-                                    <button 
-                                      type="button"
-                                      onClick={() => {
-                                        const budget = programForm.budget || { income: [], expense: [] };
-                                        const newIncome = [...(budget.income || []), { item: '', amount: 0 }];
-                                        setProgramForm({...programForm, budget: {...budget, income: newIncome}});
-                                      }}
-                                      className="w-full py-2 border-2 border-dashed border-slate-200 rounded-lg text-[10px] font-bold text-slate-400 flex items-center justify-center gap-2 hover:border-brand-primary/30 hover:text-brand-primary transition-all"
-                                    >
-                                      <Plus size={12} /> Add Income Source
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Expense Section */}
-                                <div className="space-y-4">
-                                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Expenses</label>
-                                  <div className="space-y-2">
-                                    {(programForm.budget?.expense || []).map((item, idx) => (
-                                      <div key={idx} className="flex gap-2">
-                                        <input 
-                                          type="text"
-                                          placeholder="Expense Item"
-                                          value={item.item}
-                                          onChange={(e) => {
-                                            const budget = programForm.budget || { income: [], expense: [] };
-                                            const newExpense = [...(budget.expense || [])];
-                                            newExpense[idx] = { ...newExpense[idx], item: e.target.value };
-                                            setProgramForm({...programForm, budget: {...budget, expense: newExpense}});
-                                          }}
-                                          className="flex-1 p-3 bg-white border border-slate-100 rounded-lg text-xs"
-                                        />
-                                        <input 
-                                          type="number"
-                                          placeholder="Amount"
-                                          value={item.amount}
-                                          onChange={(e) => {
-                                            const budget = programForm.budget || { income: [], expense: [] };
-                                            const newExpense = [...(budget.expense || [])];
-                                            newExpense[idx] = { ...newExpense[idx], amount: Number(e.target.value) };
-                                            setProgramForm({...programForm, budget: {...budget, expense: newExpense}});
-                                          }}
-                                          className="w-24 p-3 bg-white border border-slate-100 rounded-lg text-xs"
-                                        />
-                                        <button 
-                                          type="button"
-                                          onClick={() => {
-                                            const budget = programForm.budget || { income: [], expense: [] };
-                                            const newExpense = (budget.expense || []).filter((_, i) => i !== idx);
-                                            setProgramForm({...programForm, budget: {...budget, expense: newExpense}});
-                                          }}
-                                          className="p-3 text-red-400 hover:text-red-600"
-                                        >
-                                          <Trash2 size={16} />
-                                        </button>
-                                      </div>
-                                    ))}
-                                    <button 
-                                      type="button"
-                                      onClick={() => {
-                                        const budget = programForm.budget || { income: [], expense: [] };
-                                        const newExpense = [...(budget.expense || []), { item: '', amount: 0 }];
-                                        setProgramForm({...programForm, budget: {...budget, expense: newExpense}});
-                                      }}
-                                      className="w-full py-2 border-2 border-dashed border-slate-200 rounded-lg text-[10px] font-bold text-slate-400 flex items-center justify-center gap-2 hover:border-brand-primary/30 hover:text-brand-primary transition-all"
-                                    >
-                                      <Plus size={12} /> Add Expense Item
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="mt-6 pt-6 border-t border-brand-primary/10 flex justify-between items-center px-2">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Budget Overview</span>
-                                <div className="flex gap-6">
-                                  <div className="text-right">
-                                    <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Total Income</p>
-                                    <p className="text-sm font-bold text-green-600">৳{(programForm.budget?.income || []).reduce((acc, curr) => acc + curr.amount, 0).toLocaleString()}</p>
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Total Expense</p>
-                                    <p className="text-sm font-bold text-red-600">৳{(programForm.budget?.expense || []).reduce((acc, curr) => acc + curr.amount, 0).toLocaleString()}</p>
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Balance</p>
-                                    <p className={`text-sm font-black ${((programForm.budget?.income || []).reduce((acc, curr) => acc + curr.amount, 0) - (programForm.budget?.expense || []).reduce((acc, curr) => acc + curr.amount, 0)) >= 0 ? 'text-brand-primary' : 'text-red-500'}`}>
-                                      ৳{((programForm.budget?.income || []).reduce((acc, curr) => acc + curr.amount, 0) - (programForm.budget?.expense || []).reduce((acc, curr) => acc + curr.amount, 0)).toLocaleString()}
-                                    </p>
-                                  </div>
-                                </div>
                               </div>
                             </div>
                           </div>
@@ -6553,79 +6473,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Photo Gallery Section */}
-                          <div className="space-y-4">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                              <ImageIcon size={14} /> Photo Gallery (Event Images)
-                            </label>
-                            
-                            <div className="bg-slate-50 p-6 rounded-[2.5rem] border border-slate-100 space-y-6">
-                              {programForm.gallery && programForm.gallery.length > 0 && (
-                                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-4">
-                                  {programForm.gallery.map((img, idx) => (
-                                    <div key={idx} className="relative aspect-square rounded-2xl overflow-hidden group border-2 border-white shadow-sm flex items-center justify-center bg-slate-100">
-                                      {img ? (
-                                        <img src={img} alt={`Gallery Preview ${idx}`} className="w-full h-full object-cover" />
-                                      ) : (
-                                        <ImageIcon className="text-slate-300" size={16} />
-                                      )}
-                                      <button 
-                                        type="button"
-                                        onClick={() => {
-                                          const newGallery = programForm.gallery.filter((_, i) => i !== idx);
-                                          setProgramForm({...programForm, gallery: newGallery});
-                                        }}
-                                        className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity transform hover:scale-110"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className="flex flex-col gap-4">
-                                <input 
-                                  type="file"
-                                  id="gallery-bulk-upload"
-                                  className="hidden"
-                                  accept="image/*"
-                                  multiple
-                                  onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
-                                    const files = Array.from(e.target.files || []) as File[];
-                                    if (files.length > 0) {
-                                      try {
-                                        setIsUploading('gallery');
-                                        const uploadPromises = files.map((file: File) => uploadImage(file));
-                                        const urls = await Promise.all(uploadPromises);
-                                        setProgramForm({
-                                          ...programForm, 
-                                          gallery: [...(programForm.gallery || []), ...urls]
-                                        });
-                                      } catch (err) {
-                                        alert(err instanceof Error ? err.message : 'Gallery upload failed');
-                                      } finally {
-                                        setIsUploading(null);
-                                      }
-                                    }
-                                  }}
-                                />
-                                <label 
-                                  htmlFor="gallery-bulk-upload"
-                                  className="flex items-center justify-center gap-3 px-8 py-4 bg-white border-2 border-dashed border-slate-200 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-600 hover:border-brand-primary hover:text-brand-primary transition-all cursor-pointer shadow-sm group"
-                                >
-                                  {isUploading === 'gallery' ? (
-                                    <Loader2 size={20} className="animate-spin text-brand-primary" />
-                                  ) : (
-                                    <Upload size={20} className="group-hover:scale-110 transition-transform" />
-                                  )}
-                                  {isUploading === 'gallery' ? 'Uploading Multiple Photos...' : 'Upload Gallery Photos (Multiple)'}
-                                </label>
-                                <p className="text-[10px] text-center text-slate-400">Select one or more photos taken during the event to showcase in the gallery.</p>
-                              </div>
-                            </div>
-                          </div>
-
                           <div className="space-y-2">
                             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Extended Details (HTML supported)</label>
                             <textarea 
@@ -6636,17 +6483,6 @@ export default function App() {
                               placeholder="Full program agenda and details. Supports HTML (e.g. <ul><li>Step 1</li></ul>)..."
                             />
                             <p className="text-[10px] text-slate-400">Use &lt;ul&gt;&lt;li&gt; tags for bullet points if needed.</p>
-                          </div>
-
-                          <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-xl">
-                            <input 
-                              type="checkbox"
-                              id="featured"
-                              checked={programForm.featured}
-                              onChange={(e) => setProgramForm({...programForm, featured: e.target.checked})}
-                              className="w-5 h-5 accent-brand-primary"
-                            />
-                            <label htmlFor="featured" className="text-sm font-bold text-slate-700">Set as Featured (Homepage Hero)</label>
                           </div>
 
                           <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
@@ -6716,9 +6552,15 @@ export default function App() {
                                       </span>
                                     </div>
                                     <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{p.title}</h4>
-                                    <div className="flex items-center gap-4 mt-1 text-[10px] text-slate-400 font-medium">
+                                    <div className="flex items-center gap-4 mt-1 text-[10px] text-slate-400 font-medium flex-wrap">
                                       <span className="flex items-center gap-1"><Calendar size={10} /> {p.date}</span>
                                       <span className="flex items-center gap-1"><MapPin size={10} /> {p.location}</span>
+                                      {p.registrationFee !== undefined && p.registrationFee > 0 && (
+                                        <span className="flex items-center gap-1 text-brand-primary font-bold"><CreditCard size={10} /> Fee: ৳{p.registrationFee}</span>
+                                      )}
+                                      {p.registrationDeadline && (
+                                        <span className="flex items-center gap-1 text-red-500 font-bold"><Clock size={10} /> Deadline: {p.registrationDeadline}</span>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
