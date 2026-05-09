@@ -253,6 +253,9 @@
         "name": { "type": "string" },
         "amount": { "type": "number" },
         "type": { "type": "string", "enum": ["yearly", "one-time"] },
+        "targetMemberType": { "type": "string", "enum": ["all", "association", "executive"] },
+        "isActive": { "type": "boolean" },
+        "pausedAt": { "type": "string", "format": "date-time" },
         "frequency": { "type": "number" },
         "terms": {
           "type": "array",

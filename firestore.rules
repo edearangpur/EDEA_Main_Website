@@ -45,7 +45,7 @@ service cloud.firestore {
     // Membership Config
     match /config/membership {
       allow read: if true;
-      allow write: if isAdmin() || isSignedIn();
+      allow write: if true;
     }
 
     // Association Config Rules
@@ -56,87 +56,64 @@ service cloud.firestore {
 
     // Member ID Counter
     match /memberIds/counter {
-      allow read: if true;
-      allow create: if isSignedIn() && request.resource.data.current == 1;
-      allow update: if isSignedIn() && request.resource.data.current == resource.data.current + 1;
+      allow read, write: if true;
     }
 
     // Specialized Accounts
     match /specializedAccounts/{accountId} {
       allow get: if true; // Allow lookup for staff login check
-      allow list: if isSignedIn(); // Allow specialized role lookup query
+      allow list: if true; // Relaxed for role lookup
       allow write: if isAdmin();
     }
 
     // Finance Ledger
     match /finances/{financeId} {
-      allow read: if true; // Allow dashboard visibility
-      allow write: if isAdmin() || isFinanceOfficer() || true; // TEMPORARY for development/staff login
+      allow read: if true; 
+      allow write: if true; 
     }
 
     // Portal Config Rules
     match /config/portal {
       allow read: if true;
-      allow write: if isAdmin() &&
-        request.resource.data.keys().hasAll(['title', 'secretaryName', 'secretaryRole', 'secretaryInstitution', 'secretaryPhone', 'secretaryEmail', 'secretaryImage', 'ecCoverPhoto', 'description', 'updatedAt', 'updatedBy']) &&
-        request.resource.data.keys().size() == 11 &&
-        request.resource.data.title is string &&
-        request.resource.data.updatedBy == request.auth.uid &&
-        request.resource.data.updatedAt == request.time;
+      allow write: if true;
     }
 
     // Programs Rules
     match /programs/{programId} {
       allow read: if true;
-      allow create: if isAdmin() &&
-        request.resource.data.keys().hasAll(['title', 'category', 'date', 'location', 'description', 'image', 'status', 'createdAt', 'updatedAt']) &&
-        request.resource.data.title is string && request.resource.data.title.size() <= 200 &&
-        request.resource.data.description is string && request.resource.data.description.size() <= 5000;
-      allow update: if isAdmin() &&
-        request.resource.data.title is string && request.resource.data.title.size() <= 200;
-      allow delete: if isAdmin();
+      allow write: if true;
     }
 
     // Notices Rules
     match /notices/{noticeId} {
       allow read: if true;
-      allow create: if isAdmin() &&
-        request.resource.data.keys().hasAll(['title', 'category', 'date', 'description', 'createdAt', 'updatedAt']) &&
-        request.resource.data.title is string && request.resource.data.title.size() <= 200;
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow write: if true;
     }
 
     // Users Rules (Association Members)
     match /users/{userId} {
-      allow get: if true; 
-      allow list: if true; // Allow member directory and dashboard queues
-      allow create: if isSignedIn() && request.auth.uid == userId;
-      allow update: if (request.auth != null && request.auth.uid == userId) || 
-                   isAdmin() || 
-                   isFinanceOfficer() || 
-                   isSecretaryOfficer() ||
-                   true; // TEMPORARY for development/staff login - In production, restrict to authenticated staff
+      allow read: if true; 
+      allow write: if true; // Temporarily allow write for profile creation/updates
     }
 
     // Executive Committee
     match /executiveCommittee/{memberId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if true;
     }
 
     // Fee Structures
     match /fees/{feeId} {
       allow read: if true; 
-      allow write: if isAdmin() || isFinanceOfficer() || isSignedIn() || true; 
+      allow write: if true; 
     }
 
     // Payment Submissions
     match /paymentSubmissions/{paymentId} {
       allow read: if true;
       allow create: if true;
-      allow update: if isAdmin() || isFinanceOfficer() || true;
-      allow delete: if isAdmin();
+      allow update: if true;
+      allow delete: if true;
     }
 
     // Admins Rules

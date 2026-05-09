@@ -52,6 +52,8 @@ import {
   Building2,
   GraduationCap,
   Receipt,
+  Play,
+  Pause,
   Image as ImageIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -165,6 +167,7 @@ interface UserProfile {
   photoURL?: string;
   profilePicture?: string;
   membershipStatus: string;
+  membershipLevel?: 'association' | 'executive';
   paymentAmount?: number;
   paymentMethod?: string;
   paymentSubmittedAt?: any;
@@ -207,6 +210,9 @@ interface FeeStructure {
   name: string;
   amount: number;
   type: 'yearly' | 'one-time';
+  targetMemberType: 'all' | 'association' | 'executive';
+  isActive: boolean;
+  pausedAt?: any;
   frequency: number;
   terms: FeeTerm[];
   createdAt: any;
@@ -569,6 +575,14 @@ export default function App() {
   const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
   const [paymentSubmissions, setPaymentSubmissions] = useState<PaymentSubmission[]>([]);
 
+  const safeToDate = (ts: any): Date => {
+    if (!ts) return new Date();
+    if (typeof ts.toDate === 'function') return ts.toDate();
+    if (ts.seconds !== undefined) return new Date(ts.seconds * 1000);
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? new Date() : d;
+  };
+
   const memberAnalysisProfileHistory = useMemo(() => {
     if (!selectedAnalysisUser) return [];
     
@@ -579,7 +593,7 @@ export default function App() {
     ];
 
     userSubmissions.forEach(s => {
-      const dateStr = s.submittedAt && s.submittedAt.toDate ? s.submittedAt.toDate().toLocaleDateString('en-GB') : (s.submittedAt ? new Date(s.submittedAt).toLocaleDateString('en-GB') : 'N/A');
+      const dateStr = safeToDate(s.submittedAt).toLocaleDateString('en-GB');
       history.push({
         type: s.feeName || 'Fee',
         amount: s.amount,
@@ -591,7 +605,7 @@ export default function App() {
     });
 
     if (selectedAnalysisUser.paymentAmount) {
-      const dateStr = selectedAnalysisUser.paymentSubmittedAt && selectedAnalysisUser.paymentSubmittedAt.toDate ? selectedAnalysisUser.paymentSubmittedAt.toDate().toLocaleDateString('en-GB') : (selectedAnalysisUser.paymentSubmittedAt ? new Date(selectedAnalysisUser.paymentSubmittedAt).toLocaleDateString('en-GB') : 'N/A');
+      const dateStr = safeToDate(selectedAnalysisUser.paymentSubmittedAt).toLocaleDateString('en-GB');
       history.push({
         type: 'Registration',
         amount: selectedAnalysisUser.paymentAmount,
@@ -604,58 +618,94 @@ export default function App() {
 
     // Sort by date (descending)
     return history.sort((a, b) => {
-      const dateA = new Date(a.date.split('/').reverse().join('-')).getTime();
-      const dateB = new Date(b.date.split('/').reverse().join('-')).getTime();
-      return dateB - dateA;
+      const dateAStr = a.date.includes('/') ? a.date.split('/').reverse().join('-') : a.date;
+      const dateBStr = b.date.includes('/') ? b.date.split('/').reverse().join('-') : b.date;
+      const dateA = new Date(dateAStr).getTime();
+      const dateB = new Date(dateBStr).getTime();
+      return (isNaN(dateB) ? 0 : dateB) - (isNaN(dateA) ? 0 : dateA);
     });
   }, [selectedAnalysisUser, paymentSubmissions]);
 
   const memberFinancialReports = useMemo(() => {
-    return allUsers.map(member => {
+    const eligibleMembers = allUsers.filter(u => u.email !== 'edea.rangpur@gmail.com');
+    
+    return eligibleMembers.map(member => {
       let totalPaid = 0;
       let totalDue = 0;
+      let totalPending = 0;
       
-      const memberSubmissions = paymentSubmissions.filter(s => s.userId === member.id && s.status === 'approved');
+      const memberSubmissions = paymentSubmissions.filter(s => s.userId === member.id);
+      const approvedSubmissions = memberSubmissions.filter(s => s.status === 'approved');
+      const pendingSubmissions = memberSubmissions.filter(s => s.status === 'pending');
+
+      // Check member type for fee targeting
+      const isExecutive = executiveMembers.some(em => em.userId === member.id);
+      const memberTypeCategory = isExecutive ? 'executive' : 'association';
 
       // 1. Registration Fee (Historical/Base)
-      const regAmount = Number(membershipSettings?.membershipAmount) || 0;
+      const regAmount = Number(membershipSettings?.membershipAmount) || 100;
       if (selectedFeeFilter === 'all' || selectedFeeFilter === 'reg-fee') {
-        const isApproved = member.membershipStatus === 'approved';
-        if (isApproved) {
+        const isPaidInLedger = member.membershipStatus === 'approved' || member.membershipStatus === 'pending_secretary';
+        const isPendingInLedger = member.membershipStatus === 'pending_finance' || 
+                        (member.transactionId && member.membershipStatus === 'member_candidate');
+        
+        if (isPaidInLedger) {
           totalPaid += (Number(member.paymentAmount) || regAmount);
-        } else if (regAmount > 0 && member.membershipStatus !== 'rejected') {
+        } else if (isPendingInLedger) {
+          totalPending += regAmount;
+        } else if (member.membershipStatus !== 'rejected' && member.role !== 'admin') {
           totalDue += regAmount;
         }
       }
 
       // 2. One-time fees from Fee Management
-      feeStructures.filter(f => f.type === 'one-time' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id)).forEach(fee => {
-        const isPaid = memberSubmissions.some(s => s.feeId === fee.id);
+      feeStructures.filter(f => {
+        const matchesType = !f.targetMemberType || f.targetMemberType === 'all' || f.targetMemberType === memberTypeCategory;
+        return f.type === 'one-time' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id) && matchesType;
+      }).forEach(fee => {
+        const isPaid = approvedSubmissions.some(s => s.feeId === fee.id);
+        const isPending = pendingSubmissions.some(s => s.feeId === fee.id);
+
         if (isPaid) {
           totalPaid += (Number(fee.amount) || 0);
+        } else if (isPending) {
+          totalPending += (Number(fee.amount) || 0);
         } else {
-          totalDue += (Number(fee.amount) || 0);
+          // If the fee is inactive, it's only "due" if the member joined before it was paused
+          const feePausedDate = fee.isActive === false && fee.pausedAt ? safeToDate(fee.pausedAt) : null;
+          const memberJoinDate = safeToDate(member.createdAt);
+          
+          if (fee.isActive !== false || (feePausedDate && memberJoinDate < feePausedDate)) {
+            totalDue += (Number(fee.amount) || 0);
+          }
         }
       });
 
       // 3. Yearly fees from Fee Management
-      feeStructures.filter(f => f.type === 'yearly' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id)).forEach(fee => {
-        const feeDate = fee.createdAt?.toDate?.() || (fee.createdAt ? new Date(fee.createdAt) : new Date());
+      feeStructures.filter(f => {
+        const matchesType = !f.targetMemberType || f.targetMemberType === 'all' || f.targetMemberType === memberTypeCategory;
+        return f.type === 'yearly' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id) && matchesType;
+      }).forEach(fee => {
+        const feeDate = safeToDate(fee.createdAt);
         const startYear = feeDate.getFullYear();
-        const currentYear = new Date().getFullYear();
         
-        for (let year = startYear; year <= currentYear; year++) {
+        let endYear = new Date().getFullYear();
+        if (fee.isActive === false && fee.pausedAt) {
+          const pausedDate = safeToDate(fee.pausedAt);
+          endYear = pausedDate.getFullYear();
+        }
+        
+        for (let year = startYear; year <= endYear; year++) {
           (fee.terms || []).forEach((term, termIdx) => {
-            const isPaid = memberSubmissions.some(s => s.feeId === fee.id && s.year === year && s.termIndex === termIdx);
+            const isPaid = approvedSubmissions.some(s => s.feeId === fee.id && s.year === year && s.termIndex === termIdx);
+            const isPending = pendingSubmissions.some(s => s.feeId === fee.id && s.year === year && s.termIndex === termIdx);
+            
             if (isPaid) {
-              totalPaid += (Number(fee.amount) || 0);
+              totalPaid += (Number(term.amount || fee.amount) || 0);
+            } else if (isPending) {
+              totalPending += (Number(term.amount || fee.amount) || 0);
             } else {
-              // Only count as due if the term date has passed
-              const termMonth = term.lastDate?.month || 12;
-              const isPast = year < currentYear || (year === currentYear && new Date().getMonth() + 1 > termMonth);
-              if (isPast) {
-                totalDue += (Number(fee.amount) || 0);
-              }
+              totalDue += (Number(term.amount || fee.amount) || 0);
             }
           });
         }
@@ -665,6 +715,7 @@ export default function App() {
         ...member,
         totalPaid,
         totalDue,
+        totalPending,
       };
     }).filter(member => {
       // Don't show members with 0 paid and 0 due if filtering by a specific fee
@@ -679,15 +730,15 @@ export default function App() {
       if (!matchesSearch) return false;
 
       // Type filter (Dues/Paid)
-      if (financialTransparencyFilter === 'due') return member.totalDue > 0;
-      if (financialTransparencyFilter === 'paid') return member.totalDue === 0 && member.totalPaid > 0;
+      if (financialTransparencyFilter === 'due') return member.totalDue > 0 || member.totalPending > 0;
+      if (financialTransparencyFilter === 'paid') return member.totalDue === 0 && member.totalPending === 0 && member.totalPaid > 0;
       
       return true;
     });
-  }, [allUsers, feeStructures, paymentSubmissions, financialTransparencySearch, financialTransparencyFilter, selectedFeeFilter, membershipSettings]);
+  }, [allUsers, feeStructures, paymentSubmissions, financialTransparencySearch, financialTransparencyFilter, selectedFeeFilter, membershipSettings, executiveMembers]);
 
   const downloadFinancialReport = () => {
-    const headers = ['Member Name', 'Member ID', 'Email', 'Total Paid (BDT)', 'Total Due (BDT)'];
+    const headers = ['Member Name', 'Member ID', 'Email', 'Total Paid (BDT)', 'Total Due (BDT)', 'Pending (BDT)'];
     const csvContent = [
       headers.join(','),
       ...memberFinancialReports.map(m => [
@@ -695,7 +746,8 @@ export default function App() {
         `"${m.memberCode || 'N/A'}"`,
         `"${m.email}"`,
         m.totalPaid,
-        m.totalDue
+        m.totalDue,
+        m.totalPending
       ].join(','))
     ].join('\n');
 
@@ -715,12 +767,16 @@ export default function App() {
     name: string;
     amount: number;
     type: 'yearly' | 'one-time';
+    targetMemberType: 'all' | 'association' | 'executive';
+    isActive: boolean;
     frequency: number;
     terms: FeeTerm[];
   }>({
     name: '',
     amount: 0,
     type: 'yearly',
+    targetMemberType: 'all',
+    isActive: true,
     frequency: 1,
     terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }]
   });
@@ -888,6 +944,53 @@ export default function App() {
     category: '',
     date: new Date().toISOString().split('T')[0]
   });
+
+  const consolidatedFinanceLedger = useMemo(() => {
+    const entries: any[] = [...financeEntries.map(e => ({ ...e, isAuto: false }))];
+    
+    // 1. Add registration fees from allUsers
+    allUsers.forEach(u => {
+      // Show if they have a payment amount and are in a status that suggests money was received/pending
+      if (u.paymentAmount && (u.membershipStatus === 'approved' || u.membershipStatus === 'pending_finance' || u.membershipStatus === 'pending_secretary')) {
+        const date = (u.paymentSubmittedAt && typeof u.paymentSubmittedAt === 'string') 
+          ? u.paymentSubmittedAt.split('T')[0] 
+          : safeToDate(u.paymentSubmittedAt || u.createdAt).toISOString().split('T')[0];
+        
+        entries.push({
+          id: `reg-${u.id}`,
+          type: 'income',
+          amount: Number(u.paymentAmount),
+          description: `Registration: ${u.name || 'Member'} ${u.memberCode ? `(${u.memberCode})` : ''}`,
+          category: 'Registration',
+          date: date,
+          recordedBy: 'System',
+          isAuto: true
+        });
+      }
+    });
+
+    // 2. Add approved payment submissions (Monthly/Other fees)
+    paymentSubmissions.forEach(s => {
+      if (s.status === 'approved') {
+        const member = allUsers.find(u => u.id === s.userId);
+        const date = s.paymentDate || safeToDate(s.submittedAt).toISOString().split('T')[0];
+        
+        entries.push({
+          id: `sub-${s.id}`,
+          type: 'income',
+          amount: Number(s.amount),
+          description: `${s.feeType || 'Fee'}: ${member?.name || 'Member'} ${member?.memberCode ? `(${member.memberCode})` : ''}`,
+          category: s.feeType || 'Membership',
+          date: date,
+          recordedBy: 'System',
+          isAuto: true
+        });
+      }
+    });
+
+    // Sort by date desc
+    return entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [financeEntries, allUsers, paymentSubmissions]);
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [membershipPaymentForm, setMembershipPaymentForm] = useState({ transactionId: '', method: 'bkash' });
@@ -1447,7 +1550,7 @@ export default function App() {
       };
       await addDoc(collection(db, 'fees'), feeData);
       setIsAddingFee(false);
-      setFeeForm({ name: '', amount: 0, type: 'yearly', frequency: 1, terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }] });
+      setFeeForm({ name: '', amount: 0, type: 'yearly', targetMemberType: 'all', frequency: 1, terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }] });
       setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Fee structure added successfully!' });
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (error) {
@@ -1463,6 +1566,26 @@ export default function App() {
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'fees');
+    }
+  };
+
+  const toggleFeeStatus = async (fee: FeeStructure) => {
+    try {
+      const newStatus = !fee.isActive;
+      await updateDoc(doc(db, 'fees', fee.id), {
+        isActive: newStatus,
+        pausedAt: newStatus ? null : serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid || 'Unknown'
+      });
+      setSaveStatus({ 
+        id: Date.now().toString(), 
+        type: 'success', 
+        message: `Fee ${newStatus ? 'activated' : 'paused'} successfully!` 
+      });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'fees');
     }
   };
 
@@ -1798,7 +1921,7 @@ export default function App() {
               >
                 Executive Committee
               </button>
-              {user && (
+              {user && !isAdmin && (
                 <button 
                   onClick={() => {
                     setShowMemberDashboard(true);
@@ -1988,7 +2111,7 @@ export default function App() {
                   Member
                 </button>
                 
-                {user && (
+                {user && !isAdmin && (
                   <button 
                     onClick={() => { 
                       setShowMemberDashboard(true);
@@ -3354,7 +3477,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {showMemberDashboard && user && (
+        {showMemberDashboard && user && !isAdmin && (
           <div className="max-w-4xl mx-auto px-4 py-12">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
               <div className="flex items-center gap-3">
@@ -3420,11 +3543,16 @@ export default function App() {
                     )}
                   </div>
                   <h3 className="font-bold text-slate-900">{userProfile?.name}</h3>
-                  {userProfile?.memberCode && (
-                    <p className="text-[10px] font-black text-brand-primary uppercase tracking-tighter mt-1 bg-brand-primary/5 py-1 px-2 rounded-lg inline-block">
-                      ID: {userProfile.memberCode}
+                  <div className="flex flex-wrap justify-center gap-2 mt-1">
+                    {userProfile?.memberCode && (
+                      <p className="text-[10px] font-black text-brand-primary uppercase tracking-tighter bg-brand-primary/5 py-1 px-2 rounded-lg inline-block">
+                        ID: {userProfile.memberCode}
+                      </p>
+                    )}
+                    <p className={`text-[10px] font-black uppercase tracking-tighter py-1 px-2 rounded-lg inline-block ${executiveMembers.some(m => m.userId === user.uid) ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {executiveMembers.some(m => m.userId === user.uid) ? 'Executive Member' : 'Association Member'}
                     </p>
-                  )}
+                  </div>
                   <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">{userProfile?.role?.replace('_', ' ')}</p>
                   {userProfile?.phone && (
                     <div className="mt-2 flex items-center justify-center gap-1.5 text-[10px] text-slate-400 font-bold">
@@ -3442,6 +3570,14 @@ export default function App() {
                     <span className="text-slate-500">Verified Member</span>
                     <span className={userProfile?.isVerified ? "text-green-600 font-bold" : "text-amber-600 font-bold"}>
                       {userProfile?.isVerified ? "Yes" : "Pending"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm mt-3 pt-3 border-t border-brand-primary/5">
+                    <span className="text-slate-500">Member Level</span>
+                    <span className="text-brand-primary font-bold">
+                      {executiveMembers.some(m => m.userId === user.uid) 
+                        ? "Executive Committee Member" 
+                        : (userProfile?.membershipStatus === 'approved' ? "Association Member" : "Membership Pending")}
                     </span>
                   </div>
                 </div>
@@ -5496,7 +5632,7 @@ export default function App() {
                               <div className="text-right">
                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
                                 <div className="text-xl font-display font-bold text-slate-900">
-                                  ৳ {financeEntries.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
+                                  ৳ {consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
                                 </div>
                               </div>
                               <button 
@@ -5608,7 +5744,7 @@ export default function App() {
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
-                                  {financeEntries.map(entry => (
+                                  {consolidatedFinanceLedger.map(entry => (
                                     <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
                                       <td className="px-6 py-4">
                                         <div className="text-sm font-bold text-slate-900">{entry.description}</div>
@@ -5621,12 +5757,16 @@ export default function App() {
                                         {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
                                       </td>
                                       <td className="px-6 py-4 text-center">
-                                        <button 
-                                          onClick={async () => { if(confirm('Delete?')) await deleteDoc(doc(db, 'finances', entry.id)); }}
-                                          className="text-slate-300 hover:text-red-500 transition-colors"
-                                        >
-                                          <Trash2 size={16} />
-                                        </button>
+                                        {!entry.isAuto ? (
+                                          <button 
+                                            onClick={async () => { if(confirm('Delete?')) await deleteDoc(doc(db, 'finances', entry.id)); }}
+                                            className="text-slate-300 hover:text-red-500 transition-colors"
+                                          >
+                                            <Trash2 size={16} />
+                                          </button>
+                                        ) : (
+                                          <div className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">Auto</div>
+                                        )}
                                       </td>
                                     </tr>
                                   ))}
@@ -5669,8 +5809,14 @@ export default function App() {
                             {selectedFeeFilter === 'all' ? 'Total Dues' : 'Fee Dues'}
                           </p>
                           <div className="text-3xl font-black text-red-500 font-display italic">
-                            ৳{memberFinancialReports.reduce((sum, m) => sum + m.totalDue, 0).toLocaleString()}
+                            ৳{(memberFinancialReports.reduce((sum, m) => sum + m.totalDue, 0) + memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0)).toLocaleString()}
                           </div>
+                          {memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0) > 0 && (
+                            <div className="mt-1 flex items-center gap-1.5 text-[9px] font-bold text-amber-500 uppercase tracking-tighter">
+                              <Clock size={10} />
+                              ৳{memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0).toLocaleString()} Pending Review
+                            </div>
+                          )}
                         </div>
                         <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
                           <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-amber-500/10 transition-colors" />
@@ -5769,6 +5915,9 @@ export default function App() {
                                           <span className="text-[10px] font-black text-brand-primary bg-brand-primary/5 px-2 py-0.5 rounded-md uppercase tracking-wider">
                                             {m.memberCode || 'New Member'}
                                           </span>
+                                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-tight ${executiveMembers.some(ecm => ecm.userId === m.id) ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                            {executiveMembers.some(ecm => ecm.userId === m.id) ? 'Executive' : 'Association'}
+                                          </span>
                                         </div>
                                       </div>
                                     </div>
@@ -5776,25 +5925,50 @@ export default function App() {
                                   <td className="px-6 py-5 text-center">
                                     <div className="inline-flex flex-col items-center">
                                       <span className="text-sm font-black text-slate-900 font-display">৳{m.totalPaid.toLocaleString()}</span>
-                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Verified</span>
+                                      <span className={`text-[9px] font-bold uppercase tracking-tighter ${['approved', 'pending_secretary'].includes(m.membershipStatus) ? 'text-slate-400' : 'text-amber-500'}`}>
+                                        {['approved', 'pending_secretary'].includes(m.membershipStatus) ? 'Verified' : 'Pending Review'}
+                                      </span>
                                     </div>
                                   </td>
                                   <td className="px-6 py-5 text-center">
-                                    <div className="inline-flex flex-col items-center">
-                                      <span className={`text-sm font-black font-display ${m.totalDue > 0 ? 'text-red-500' : 'text-slate-300'}`}>
-                                        ৳{m.totalDue.toLocaleString()}
-                                      </span>
-                                      {m.totalDue > 0 && <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Pending</span>}
+                                    <div className="inline-flex flex-col items-center gap-2">
+                                      {m.totalPending > 0 && (
+                                        <div className="flex flex-col items-center">
+                                          <span className="text-sm font-black font-display text-amber-500">
+                                            ৳{m.totalPending.toLocaleString()}
+                                          </span>
+                                          <span className="text-[9px] font-bold text-amber-400 uppercase tracking-tighter">Pending</span>
+                                        </div>
+                                      )}
+                                      {m.totalDue > 0 && (
+                                        <div className="flex flex-col items-center">
+                                          <span className="text-sm font-black font-display text-red-500">
+                                            ৳{m.totalDue.toLocaleString()}
+                                          </span>
+                                          <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Due</span>
+                                        </div>
+                                      )}
+                                      {m.totalPending === 0 && m.totalDue === 0 && (
+                                        <span className="text-sm font-black font-display text-slate-300">৳0</span>
+                                      )}
                                     </div>
                                   </td>
                                   <td className="px-8 py-5 text-right">
                                     <span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border inline-flex items-center gap-2 shadow-sm ${
-                                      m.totalDue === 0 
+                                      (m.totalDue === 0 && m.totalPending === 0)
                                         ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
-                                        : 'bg-red-50 text-red-500 border-red-100'
+                                        : m.totalPending > 0 
+                                          ? 'bg-amber-50 text-amber-600 border-amber-100'
+                                          : 'bg-red-50 text-red-500 border-red-100'
                                     }`}>
-                                      <div className={`w-1.5 h-1.5 rounded-full ${m.totalDue === 0 ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
-                                      {m.totalDue === 0 ? 'Settled' : 'Action Required'}
+                                      <div className={`w-1.5 h-1.5 rounded-full ${
+                                        (m.totalDue === 0 && m.totalPending === 0) 
+                                          ? 'bg-emerald-500' 
+                                          : m.totalPending > 0 
+                                            ? 'bg-amber-500 animate-pulse' 
+                                            : 'bg-red-500 animate-pulse'
+                                      }`} />
+                                      {(m.totalDue === 0 && m.totalPending === 0) ? 'Settled' : m.totalPending > 0 ? 'Pending Review' : 'Action Required'}
                                     </span>
                                   </td>
                                 </motion.tr>
@@ -5876,6 +6050,18 @@ export default function App() {
                                 >
                                   <option value="yearly">Yearly / Monthly (Recurring)</option>
                                   <option value="one-time">One Time Payment</option>
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Target Member Type</label>
+                                <select 
+                                  value={feeForm.targetMemberType}
+                                  onChange={(e) => setFeeForm({...feeForm, targetMemberType: e.target.value as any})}
+                                  className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all font-sans"
+                                >
+                                  <option value="all">All Members</option>
+                                  <option value="association">Association Members Only</option>
+                                  <option value="executive">Executive Committee Only</option>
                                 </select>
                               </div>
                               {feeForm.type === 'yearly' && (
@@ -5980,7 +6166,20 @@ export default function App() {
                         {feeStructures.map(fee => (
                           <div key={fee.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-brand-primary/20 transition-all">
                             <div>
-                              <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{fee.name}</h4>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{fee.name}</h4>
+                                {fee.targetMemberType && (
+                                  <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${
+                                    fee.targetMemberType === 'executive' ? 'bg-amber-100 text-amber-700' : 
+                                    fee.targetMemberType === 'association' ? 'bg-blue-100 text-blue-700' : 
+                                    'bg-slate-200 text-slate-600'
+                                  }`}>
+                                    {fee.targetMemberType === 'executive' ? 'Executive Only' : 
+                                     fee.targetMemberType === 'association' ? 'Association Only' : 
+                                     'All Members'}
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex items-center gap-6 mt-2">
                                 <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400">
                                   <CreditCard size={12} /> ৳{fee.amount} / term
@@ -5990,12 +6189,25 @@ export default function App() {
                                 </div>
                               </div>
                             </div>
-                            <button 
-                              onClick={() => handleDeleteFee(fee.id)}
-                              className="w-10 h-10 flex items-center justify-center bg-white border border-slate-100 rounded-xl text-slate-300 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
-                            >
-                              <Trash2 size={18} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => toggleFeeStatus(fee)}
+                                className={`w-10 h-10 flex items-center justify-center rounded-xl border transition-all shadow-sm ${
+                                  fee.isActive === false
+                                    ? 'bg-amber-500 border-amber-600 text-white hover:bg-amber-600'
+                                    : 'bg-white border-slate-100 text-slate-300 hover:text-amber-500 hover:border-amber-100'
+                                }`}
+                                title={fee.isActive === false ? "Resume Fee" : "Pause Fee"}
+                              >
+                                {fee.isActive === false ? <Play size={18} /> : <Pause size={18} />}
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteFee(fee.id)}
+                                className="w-10 h-10 flex items-center justify-center bg-white border border-slate-100 rounded-xl text-slate-300 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -6643,7 +6855,7 @@ export default function App() {
                                          <span className="text-slate-400">Method: <span className="text-slate-600 font-bold uppercase">{m.paymentMethod}</span></span>
                                          <span className="text-slate-400">TXID: <span className="text-slate-600 font-mono font-bold">{m.transactionId}</span></span>
                                          <span className="text-slate-400">Amount: <span className="text-slate-600 font-bold tracking-tighter">৳{m.paymentAmount}</span></span>
-                                         <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{m.paymentSubmittedAt ? new Date(m.paymentSubmittedAt).toLocaleDateString() : 'N/A'}</span></span>
+                                         <span className="text-slate-400">Date: <span className="text-slate-600 font-bold">{m.paymentSubmittedAt ? safeToDate(m.paymentSubmittedAt).toLocaleDateString() : 'N/A'}</span></span>
                                        </div>
                                      </div>
                                      <div className="flex items-center gap-3">
