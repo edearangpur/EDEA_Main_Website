@@ -252,6 +252,7 @@
       "properties": {
         "name": { "type": "string" },
         "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["yearly", "one-time"] },
         "frequency": { "type": "number" },
         "terms": {
           "type": "array",

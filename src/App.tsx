@@ -206,6 +206,7 @@ interface FeeStructure {
   id: string;
   name: string;
   amount: number;
+  type: 'yearly' | 'one-time';
   frequency: number;
   terms: FeeTerm[];
   createdAt: any;
@@ -413,6 +414,9 @@ export default function App() {
   const [showNoticesView, setShowNoticesView] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMemberDashboard, setShowMemberDashboard] = useState(false);
+  const [financialTransparencySearch, setFinancialTransparencySearch] = useState('');
+  const [financialTransparencyFilter, setFinancialTransparencyFilter] = useState('all'); // all, due, paid
+  const [selectedFeeFilter, setSelectedFeeFilter] = useState('all');
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showTermsOfService, setShowTermsOfService] = useState(false);
   const [memberAnalysisSearch, setMemberAnalysisSearch] = useState('');
@@ -605,15 +609,118 @@ export default function App() {
       return dateB - dateA;
     });
   }, [selectedAnalysisUser, paymentSubmissions]);
+
+  const memberFinancialReports = useMemo(() => {
+    return allUsers.map(member => {
+      let totalPaid = 0;
+      let totalDue = 0;
+      
+      const memberSubmissions = paymentSubmissions.filter(s => s.userId === member.id && s.status === 'approved');
+
+      // 1. Registration Fee (Historical/Base)
+      const regAmount = Number(membershipSettings?.membershipAmount) || 0;
+      if (selectedFeeFilter === 'all' || selectedFeeFilter === 'reg-fee') {
+        const isApproved = member.membershipStatus === 'approved';
+        if (isApproved) {
+          totalPaid += (Number(member.paymentAmount) || regAmount);
+        } else if (regAmount > 0 && member.membershipStatus !== 'rejected') {
+          totalDue += regAmount;
+        }
+      }
+
+      // 2. One-time fees from Fee Management
+      feeStructures.filter(f => f.type === 'one-time' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id)).forEach(fee => {
+        const isPaid = memberSubmissions.some(s => s.feeId === fee.id);
+        if (isPaid) {
+          totalPaid += (Number(fee.amount) || 0);
+        } else {
+          totalDue += (Number(fee.amount) || 0);
+        }
+      });
+
+      // 3. Yearly fees from Fee Management
+      feeStructures.filter(f => f.type === 'yearly' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id)).forEach(fee => {
+        const feeDate = fee.createdAt?.toDate?.() || (fee.createdAt ? new Date(fee.createdAt) : new Date());
+        const startYear = feeDate.getFullYear();
+        const currentYear = new Date().getFullYear();
+        
+        for (let year = startYear; year <= currentYear; year++) {
+          (fee.terms || []).forEach((term, termIdx) => {
+            const isPaid = memberSubmissions.some(s => s.feeId === fee.id && s.year === year && s.termIndex === termIdx);
+            if (isPaid) {
+              totalPaid += (Number(fee.amount) || 0);
+            } else {
+              // Only count as due if the term date has passed
+              const termMonth = term.lastDate?.month || 12;
+              const isPast = year < currentYear || (year === currentYear && new Date().getMonth() + 1 > termMonth);
+              if (isPast) {
+                totalDue += (Number(fee.amount) || 0);
+              }
+            }
+          });
+        }
+      });
+      
+      return {
+        ...member,
+        totalPaid,
+        totalDue,
+      };
+    }).filter(member => {
+      // Don't show members with 0 paid and 0 due if filtering by a specific fee
+      if (selectedFeeFilter !== 'all' && member.totalPaid === 0 && member.totalDue === 0) return false;
+
+      // Search filter
+      const searchLower = financialTransparencySearch.toLowerCase();
+      const matchesSearch = (member.name || '').toLowerCase().includes(searchLower) || 
+                           (member.memberCode || '').toLowerCase().includes(searchLower) ||
+                           (member.email || '').toLowerCase().includes(searchLower);
+      
+      if (!matchesSearch) return false;
+
+      // Type filter (Dues/Paid)
+      if (financialTransparencyFilter === 'due') return member.totalDue > 0;
+      if (financialTransparencyFilter === 'paid') return member.totalDue === 0 && member.totalPaid > 0;
+      
+      return true;
+    });
+  }, [allUsers, feeStructures, paymentSubmissions, financialTransparencySearch, financialTransparencyFilter, selectedFeeFilter, membershipSettings]);
+
+  const downloadFinancialReport = () => {
+    const headers = ['Member Name', 'Member ID', 'Email', 'Total Paid (BDT)', 'Total Due (BDT)'];
+    const csvContent = [
+      headers.join(','),
+      ...memberFinancialReports.map(m => [
+        `"${m.name}"`,
+        `"${m.memberCode || 'N/A'}"`,
+        `"${m.email}"`,
+        m.totalPaid,
+        m.totalDue
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Member_Financial_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const [isAddingFee, setIsAddingFee] = useState(false);
   const [feeForm, setFeeForm] = useState<{
     name: string;
     amount: number;
+    type: 'yearly' | 'one-time';
     frequency: number;
     terms: FeeTerm[];
   }>({
     name: '',
     amount: 0,
+    type: 'yearly',
     frequency: 1,
     terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }]
   });
@@ -1340,7 +1447,7 @@ export default function App() {
       };
       await addDoc(collection(db, 'fees'), feeData);
       setIsAddingFee(false);
-      setFeeForm({ name: '', amount: 0, frequency: 1, terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }] });
+      setFeeForm({ name: '', amount: 0, type: 'yearly', frequency: 1, terms: [{ timeline: '', lastDate: { day: 31, month: 12 } }] });
       setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Fee structure added successfully!' });
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (error) {
@@ -1709,6 +1816,7 @@ export default function App() {
                   My Dashboard
                 </button>
               )}
+
             </div>
 
               {isAdmin && (
@@ -1749,6 +1857,7 @@ export default function App() {
                   Finance Dashboard
                 </button>
               )}
+
 
               {specializedRole === 'secretary' && (
                 <button 
@@ -1902,9 +2011,9 @@ export default function App() {
                 <button 
                   onClick={() => { 
                     setShowFullCommittee(true); 
+                    setShowNoticesView(false);
                     setShowAllProgramsView(false); 
                     setShowAllMembers(false); 
-                    setShowNoticesView(false);
                     setShowAdminDashboard(false);
                     setSelectedProgram(null); 
                     setIsMenuOpen(false); 
@@ -3245,7 +3354,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-
         {showMemberDashboard && user && (
           <div className="max-w-4xl mx-auto px-4 py-12">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
@@ -3462,6 +3570,78 @@ export default function App() {
 
                     <div className="space-y-4">
                       {feeStructures.map(fee => {
+                        if (fee.type === 'one-time') {
+                          const submission = paymentSubmissions.find(s => 
+                            s.userId === user.uid && 
+                            s.feeId === fee.id &&
+                            s.status === 'approved'
+                          );
+                          const pendingSubmission = paymentSubmissions.find(s => 
+                            s.userId === user.uid && 
+                            s.feeId === fee.id &&
+                            s.status === 'pending'
+                          );
+                          const rejectedSubmission = paymentSubmissions.find(s => 
+                            s.userId === user.uid && 
+                            s.feeId === fee.id &&
+                            s.status === 'rejected'
+                          );
+
+                          return (
+                            <div key={fee.id} className="border border-slate-100 rounded-2xl overflow-hidden">
+                              <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-100">
+                                <div>
+                                  <h3 className="font-bold text-slate-900">{fee.name}</h3>
+                                  <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest mt-1">One-Time Payment</span>
+                                </div>
+                                <span className="text-brand-primary font-bold text-sm">{fee.amount} BDT</span>
+                              </div>
+                              <div className="p-4">
+                                <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
+                                  submission ? 'bg-green-50 border-green-100' :
+                                  pendingSubmission ? 'bg-amber-50 border-amber-100' :
+                                  rejectedSubmission ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'
+                                }`}>
+                                  <div className="text-left">
+                                    <div className="text-[10px] font-bold text-slate-500 leading-none mb-1">Status</div>
+                                    <div className={`text-xs font-bold ${
+                                      submission ? 'text-green-700' :
+                                      pendingSubmission ? 'text-amber-700' :
+                                      rejectedSubmission ? 'text-red-700' : 'text-slate-900'
+                                    }`}>
+                                      {submission ? 'Paid & Approved' :
+                                       pendingSubmission ? 'Pending Approval' :
+                                       rejectedSubmission ? 'Payment Rejected' : 'Due for Payment'}
+                                    </div>
+                                  </div>
+
+                                  {(!submission && !pendingSubmission) && (
+                                    <button 
+                                      onClick={() => {
+                                        setSelectedFeeForPayment(fee);
+                                        setPaymentForm({
+                                          transactionDetails: '',
+                                          selectedTerms: [{ termIndex: 0, year: 0 }]
+                                        });
+                                        setShowPaymentModal(true);
+                                      }}
+                                      className="px-6 py-2.5 bg-brand-primary text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-primary/20 hover:scale-105 active:scale-95 transition-all"
+                                    >
+                                      Pay Now
+                                    </button>
+                                  )}
+
+                                  {submission && (
+                                    <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white">
+                                      <Check size={18} strokeWidth={4} />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
                         const startYear = new Date(fee.createdAt?.toDate?.() || fee.createdAt || Date.now()).getFullYear();
                         const currentYear = new Date().getFullYear();
                         const feeYears = [];
@@ -3789,13 +3969,22 @@ export default function App() {
                 )}
                 
                 {specializedRole === 'finance' && (
-                  <button 
-                    onClick={() => setAdminTab('finance')}
-                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'finance' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                  >
-                    <PieChart size={18} />
-                    <span className="font-bold text-sm">Finances</span>
-                  </button>
+                  <>
+                    <button 
+                      onClick={() => setAdminTab('finance')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'finance' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <PieChart size={18} />
+                      <span className="font-bold text-sm">Finances</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('ledger')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'ledger' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <CreditCard size={18} />
+                      <span className="font-bold text-sm">Member Ledger</span>
+                    </button>
+                  </>
                 )}
 
                 {specializedRole === 'secretary' && (
@@ -5448,6 +5637,181 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+                  ) : adminTab === 'ledger' ? (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div>
+                          <h3 className="font-display font-bold text-2xl text-slate-900">Member Financial Ledger</h3>
+                          <p className="text-slate-500 text-sm mt-1">Financial transparency & membership payment tracking</p>
+                        </div>
+                        <button 
+                          onClick={downloadFinancialReport}
+                          className="bg-white text-slate-700 border border-slate-200 px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-50 active:scale-95 transition-all flex items-center gap-2 shadow-sm"
+                        >
+                          <Download size={14} /> Download CSV Report
+                        </button>
+                      </div>
+
+                      {/* Quick Stats */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-brand-primary/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-brand-primary/10 transition-colors" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                            {selectedFeeFilter === 'all' ? 'Total Collection' : 'Fee Collection'}
+                          </p>
+                          <div className="text-3xl font-black text-brand-primary font-display italic">
+                            ৳{memberFinancialReports.reduce((sum, m) => sum + m.totalPaid, 0).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-red-500/10 transition-colors" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                            {selectedFeeFilter === 'all' ? 'Total Dues' : 'Fee Dues'}
+                          </p>
+                          <div className="text-3xl font-black text-red-500 font-display italic">
+                            ৳{memberFinancialReports.reduce((sum, m) => sum + m.totalDue, 0).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-amber-500/10 transition-colors" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Relevant Members</p>
+                          <div className="text-3xl font-black text-slate-900 font-display italic">
+                            {memberFinancialReports.length}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Search & Filters */}
+                      <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
+                        <div className="flex flex-col lg:flex-row gap-4">
+                          <div className="flex-1 relative">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input 
+                              type="text"
+                              value={financialTransparencySearch}
+                              onChange={(e) => setFinancialTransparencySearch(e.target.value)}
+                              placeholder="Search member name or ID..."
+                              className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                            />
+                          </div>
+
+                          {/* Fee Type Filter */}
+                          <div className="shrink-0">
+                            <select
+                              value={selectedFeeFilter}
+                              onChange={(e) => setSelectedFeeFilter(e.target.value)}
+                              className="w-full lg:w-48 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold text-slate-600 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M2%204l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_1rem_center] bg-no-repeat pr-10"
+                            >
+                              <option value="all">All Fee Structures</option>
+                              <option value="reg-fee">Registration Fee</option>
+                              {feeStructures.map(fee => (
+                                <option key={fee.id} value={fee.id}>{fee.name}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
+                            {[
+                              { id: 'all', label: 'All', icon: Users },
+                              { id: 'due', label: 'Dues', icon: Clock },
+                              { id: 'paid', label: 'Paid', icon: Check }
+                            ].map(tab => (
+                              <button
+                                key={tab.id}
+                                onClick={() => setFinancialTransparencyFilter(tab.id)}
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+                                  financialTransparencyFilter === tab.id 
+                                    ? 'bg-white text-brand-primary shadow-sm' 
+                                    : 'text-slate-500 hover:text-slate-900'
+                                }`}
+                              >
+                                <tab.icon size={10} />
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Ledger Table */}
+                      <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-50/50 border-b border-slate-100">
+                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Member Information</th>
+                                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Total Paid (BDT)</th>
+                                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Outstanding Due</th>
+                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Payment Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {memberFinancialReports.map(m => (
+                                <motion.tr 
+                                  layout
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  key={m.id} 
+                                  className="hover:bg-slate-50/50 transition-colors group"
+                                >
+                                  <td className="px-8 py-5">
+                                    <div className="flex items-center gap-4">
+                                      <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-slate-50 shadow-sm shrink-0">
+                                        <img 
+                                          src={m.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.id}`} 
+                                          alt="" 
+                                          className="w-full h-full object-cover" 
+                                        />
+                                      </div>
+                                      <div>
+                                        <div className="font-bold text-slate-900 text-sm tracking-tight">{m.name}</div>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                          <span className="text-[10px] font-black text-brand-primary bg-brand-primary/5 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                                            {m.memberCode || 'New Member'}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-5 text-center">
+                                    <div className="inline-flex flex-col items-center">
+                                      <span className="text-sm font-black text-slate-900 font-display">৳{m.totalPaid.toLocaleString()}</span>
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Verified</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-5 text-center">
+                                    <div className="inline-flex flex-col items-center">
+                                      <span className={`text-sm font-black font-display ${m.totalDue > 0 ? 'text-red-500' : 'text-slate-300'}`}>
+                                        ৳{m.totalDue.toLocaleString()}
+                                      </span>
+                                      {m.totalDue > 0 && <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Pending</span>}
+                                    </div>
+                                  </td>
+                                  <td className="px-8 py-5 text-right">
+                                    <span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border inline-flex items-center gap-2 shadow-sm ${
+                                      m.totalDue === 0 
+                                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
+                                        : 'bg-red-50 text-red-500 border-red-100'
+                                    }`}>
+                                      <div className={`w-1.5 h-1.5 rounded-full ${m.totalDue === 0 ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
+                                      {m.totalDue === 0 ? 'Settled' : 'Action Required'}
+                                    </span>
+                                  </td>
+                                </motion.tr>
+                              ))}
+                              {memberFinancialReports.length === 0 && (
+                                <tr>
+                                  <td colSpan={4} className="px-6 py-16 text-center">
+                                    <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">No matching results</p>
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
                   ) : adminTab === 'fees' ? (
                   <div className="space-y-6">
                     <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -5492,24 +5856,49 @@ export default function App() {
                                 />
                               </div>
                               <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Annual Frequency</label>
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fee Type</label>
                                 <select 
-                                  value={feeForm.frequency}
+                                  value={feeForm.type}
                                   onChange={(e) => {
-                                    const freq = parseInt(e.target.value);
-                                    const newTerms = Array.from({ length: freq }, (_, i) => ({
-                                      timeline: feeForm.terms[i]?.timeline || '',
-                                      lastDate: feeForm.terms[i]?.lastDate || { day: 31, month: 12 }
-                                    }));
-                                    setFeeForm({...feeForm, frequency: freq, terms: newTerms});
+                                    const type = e.target.value as 'yearly' | 'one-time';
+                                    if (type === 'one-time') {
+                                      setFeeForm({
+                                        ...feeForm, 
+                                        type, 
+                                        frequency: 1, 
+                                        terms: [{ timeline: 'One Time Payment', lastDate: { day: 31, month: 12 } }]
+                                      });
+                                    } else {
+                                      setFeeForm({...feeForm, type});
+                                    }
                                   }}
                                   className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all"
                                 >
-                                  {[1, 2, 3, 4, 6, 12].map(f => (
-                                    <option key={f} value={f}>{f} times / year</option>
-                                  ))}
+                                  <option value="yearly">Yearly / Monthly (Recurring)</option>
+                                  <option value="one-time">One Time Payment</option>
                                 </select>
                               </div>
+                              {feeForm.type === 'yearly' && (
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Annual Frequency</label>
+                                  <select 
+                                    value={feeForm.frequency}
+                                    onChange={(e) => {
+                                      const freq = parseInt(e.target.value);
+                                      const newTerms = Array.from({ length: freq }, (_, i) => ({
+                                        timeline: feeForm.terms[i]?.timeline || '',
+                                        lastDate: feeForm.terms[i]?.lastDate || { day: 31, month: 12 }
+                                      }));
+                                      setFeeForm({...feeForm, frequency: freq, terms: newTerms});
+                                    }}
+                                    className="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all"
+                                  >
+                                    {[1, 2, 3, 4, 6, 12].map(f => (
+                                      <option key={f} value={f}>{f} times / year</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
                             </div>
 
                             <div className="space-y-4">
@@ -7229,7 +7618,10 @@ export default function App() {
                     <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Paying for:</div>
                     {paymentForm.selectedTerms.map((t, idx) => (
                       <div key={idx} className="text-xs font-bold text-slate-600">
-                        Term {t.termIndex + 1} - {selectedFeeForPayment.terms[t.termIndex].timeline} ({t.year})
+                        {selectedFeeForPayment.type === 'one-time' 
+                          ? selectedFeeForPayment.name
+                          : `Term ${t.termIndex + 1} - ${selectedFeeForPayment.terms[t.termIndex].timeline} (${t.year})`
+                        }
                       </div>
                     ))}
                   </div>
