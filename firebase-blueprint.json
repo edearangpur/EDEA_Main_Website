@@ -295,6 +295,22 @@
         "approvedAt": { "type": "string", "format": "date-time" },
         "approvedBy": { "type": "string" }
       }
+    },
+    "sponsorship": {
+      "title": "Sponsorship",
+      "description": "Details of sponsorship companies",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "email": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "number": { "type": "string" },
+        "icon": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "number"]
     }
   },
   "firestore": {
@@ -349,6 +365,10 @@
     "executiveCommittee/{memberId}": {
       "schema": "executiveMember",
       "description": "Collection of members in the executive committee"
+    },
+    "sponsorships/{sponsorshipId}": {
+      "schema": "sponsorship",
+      "description": "Collection of sponsorship companies"
     }
   }
 }

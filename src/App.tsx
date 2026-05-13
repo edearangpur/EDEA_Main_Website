@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
+  User as UserIcon,
   Target, 
   Eye, 
   Calendar, 
@@ -22,6 +23,7 @@ import {
   Linkedin,
   Youtube,
   Instagram,
+  Link as LinkIcon,
   MessageCircle,
   Maximize2,
   Stethoscope,
@@ -48,6 +50,9 @@ import {
   Loader2,
   Activity,
   Check,
+  CheckCircle2,
+  AlertCircle,
+  ShieldAlert,
   CreditCard,
   Briefcase,
   Building2,
@@ -55,7 +60,19 @@ import {
   Receipt,
   Play,
   Pause,
-  Image as ImageIcon
+  Image as ImageIcon,
+  FolderOpen,
+  Wallet,
+  Zap,
+  Globe,
+  Wifi,
+  Shield,
+  TrendingDown,
+  ArrowUpAZ,
+  ArrowDownZA,
+  Share2,
+  Camera,
+  AlignLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -98,11 +115,38 @@ interface Program {
     expense: { item: string; amount: number }[];
   };
   highlights?: string[];
+  driveLink?: string;
   category?: string;
   location?: string;
   status?: 'upcoming' | 'completed';
   registrationFee?: number;
   registrationDeadline?: string;
+  registrationEnabled?: boolean;
+  accountingPublished?: boolean;
+  accountingPublishedAt?: any;
+  registrationFields?: {
+    id: string;
+    label: string;
+    type: 'text' | 'select';
+    options?: string[];
+    required: boolean;
+  }[];
+}
+
+interface ProgramRegistration {
+  id: string;
+  programId: string;
+  programTitle: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  answers: Record<string, string>;
+  submittedAt: string;
+  amount: number;
+  paymentMethod: string;
+  transactionId: string;
+  paymentStatus: 'pending' | 'completed';
 }
 
 interface AssociationConfig {
@@ -198,6 +242,22 @@ interface FinanceEntry {
   date: string;
   category: string;
   recordedBy: string;
+  source?: string;
+  programId?: string;
+  attachmentUrl?: string;
+  details?: string;
+}
+
+interface Sponsorship {
+  id: string;
+  name: string;
+  address: string;
+  email: string;
+  contactPerson: string;
+  number: string;
+  icon: string;
+  createdAt: any;
+  updatedAt: any;
 }
 
 interface FeeTerm {
@@ -420,12 +480,16 @@ export default function App() {
     }
   };
   const [showAllProgramsView, setShowAllProgramsView] = useState(false);
+  const [programHistorySearch, setProgramHistorySearch] = useState('');
   const [showNoticesView, setShowNoticesView] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMemberDashboard, setShowMemberDashboard] = useState(false);
+  const [memberTab, setMemberTab] = useState<'overview' | 'programs' | 'directory' | 'settings'>('overview');
+  const [directorySearch, setDirectorySearch] = useState('');
   const [financialTransparencySearch, setFinancialTransparencySearch] = useState('');
   const [financialTransparencyFilter, setFinancialTransparencyFilter] = useState('all'); // all, due, paid
-  const [selectedFeeFilter, setSelectedFeeFilter] = useState('all');
+  const [ledgerFeeFilter, setLedgerFeeFilter] = useState('all');
+  const [ledgerProgramFilter, setLedgerProgramFilter] = useState('all');
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showTermsOfService, setShowTermsOfService] = useState(false);
   const [memberAnalysisSearch, setMemberAnalysisSearch] = useState('');
@@ -470,6 +534,13 @@ export default function App() {
       setCurrentHeroIndex(0);
     }
   }, [associationConfig.heroImages, HERO_IMAGES.length]);
+  // Auto-scroll to top when a new view is opened or program selected
+  useEffect(() => {
+    if (selectedProgram || showAllProgramsView || showFullCommittee || showAllMembers || showNoticesView || showAdminDashboard || showMemberDashboard) {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [selectedProgram, showAllProgramsView, showFullCommittee, showAllMembers, showNoticesView, showAdminDashboard, showMemberDashboard]);
+
   const [isEditingConfig, setIsEditingConfig] = useState(false);
   const [editMission, setEditMission] = useState('');
   const [editVision, setEditVision] = useState('');
@@ -557,9 +628,27 @@ export default function App() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [executiveMembers, setExecutiveMembers] = useState<any[]>([]);
-  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding' | 'create_program'>('general');
+  const [sponsorships, setSponsorships] = useState<Sponsorship[]>([]);
+  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding' | 'create_program' | 'program_mgmt' | 'sponsorship'>('general');
+  const [selectedProgramForFinance, setSelectedProgramForFinance] = useState<string>('all');
+
   const [isAddingProgram, setIsAddingProgram] = useState(false);
   const [isAddingNotice, setIsAddingNotice] = useState(false);
+  const [isAddingSponsorship, setIsAddingSponsorship] = useState(false);
+  const [showCompleteProgramModal, setShowCompleteProgramModal] = useState(false);
+  const [showPublishAccountingModal, setShowPublishAccountingModal] = useState(false);
+  const [selectedProgramToPublish, setSelectedProgramToPublish] = useState<string>('');
+  const [isPublishingAccounting, setIsPublishingAccounting] = useState(false);
+  const [isUpdatingProgramStatus, setIsUpdatingProgramStatus] = useState(false);
+  const [editingSponsorship, setEditingSponsorship] = useState<Sponsorship | null>(null);
+  const [sponsorshipForm, setSponsorshipForm] = useState({
+    name: '',
+    address: '',
+    email: '',
+    contactPerson: '',
+    number: '',
+    icon: ''
+  });
   const [ecMemberForm, setEcMemberForm] = useState({ role: '', userId: '' });
   const [ecMemberSearch, setEcMemberSearch] = useState('');
   const [isAddingECMember, setIsAddingECMember] = useState(false);
@@ -577,6 +666,15 @@ export default function App() {
   const [specializedAccounts, setSpecializedAccounts] = useState<SpecializedAccount[]>([]);
   const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
   const [paymentSubmissions, setPaymentSubmissions] = useState<PaymentSubmission[]>([]);
+  const [registrations, setRegistrations] = useState<ProgramRegistration[]>([]);
+  const [activeRegistrationProgramId, setActiveRegistrationProgramId] = useState<string | null>(null);
+  const [viewingRegistrantsId, setViewingRegistrantsId] = useState<string | null>(null);
+  const [registeringProgram, setRegisteringProgram] = useState<Program | null>(null);
+  const [registrationAnswers, setRegistrationAnswers] = useState<Record<string, string>>({});
+  const [regPaymentMethod, setRegPaymentMethod] = useState<'bkash' | 'nagad' | 'bank'>('bkash');
+  const [regTransactionId, setRegTransactionId] = useState('');
+  const [submittingRegistration, setSubmittingRegistration] = useState(false);
+  const [fullScreenImage, setFullScreenImage] = useState<number | null>(null);
 
   const safeToDate = (ts: any): Date => {
     if (!ts) return new Date();
@@ -647,7 +745,7 @@ export default function App() {
 
       // 1. Registration Fee (Historical/Base)
       const regAmount = Number(membershipSettings?.membershipAmount) || 100;
-      if (selectedFeeFilter === 'all' || selectedFeeFilter === 'reg-fee') {
+      if (ledgerFeeFilter === 'all' || ledgerFeeFilter === 'reg-fee') {
         const isPaidInLedger = member.membershipStatus === 'approved' || member.membershipStatus === 'pending_secretary';
         const isPendingInLedger = member.membershipStatus === 'pending_finance' || 
                         (member.transactionId && member.membershipStatus === 'member_candidate');
@@ -664,7 +762,7 @@ export default function App() {
       // 2. One-time fees from Fee Management
       feeStructures.filter(f => {
         const matchesType = !f.targetMemberType || f.targetMemberType === 'all' || f.targetMemberType === memberTypeCategory;
-        return f.type === 'one-time' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id) && matchesType;
+        return f.type === 'one-time' && (ledgerFeeFilter === 'all' || ledgerFeeFilter === f.id) && matchesType;
       }).forEach(fee => {
         const isPaid = approvedSubmissions.some(s => s.feeId === fee.id);
         const isPending = pendingSubmissions.some(s => s.feeId === fee.id);
@@ -687,7 +785,7 @@ export default function App() {
       // 3. Yearly fees from Fee Management
       feeStructures.filter(f => {
         const matchesType = !f.targetMemberType || f.targetMemberType === 'all' || f.targetMemberType === memberTypeCategory;
-        return f.type === 'yearly' && (selectedFeeFilter === 'all' || selectedFeeFilter === f.id) && matchesType;
+        return f.type === 'yearly' && (ledgerFeeFilter === 'all' || ledgerFeeFilter === f.id) && matchesType;
       }).forEach(fee => {
         const feeDate = safeToDate(fee.createdAt);
         const startYear = feeDate.getFullYear();
@@ -714,6 +812,20 @@ export default function App() {
         }
       });
       
+      // 4. Program Registrations
+      if (ledgerFeeFilter === 'all' || ledgerFeeFilter === 'programs') {
+        registrations.filter(r => {
+          const matchesProgram = ledgerProgramFilter === 'all' || ledgerProgramFilter === r.programId;
+          return r.userId === member.id && matchesProgram;
+        }).forEach(reg => {
+          if (reg.status === 'confirmed') {
+            totalPaid += (Number(reg.amount) || 0);
+          } else if (reg.status === 'pending') {
+            totalPending += (Number(reg.amount) || 0);
+          }
+        });
+      }
+      
       return {
         ...member,
         totalPaid,
@@ -722,7 +834,7 @@ export default function App() {
       };
     }).filter(member => {
       // Don't show members with 0 paid and 0 due if filtering by a specific fee
-      if (selectedFeeFilter !== 'all' && member.totalPaid === 0 && member.totalDue === 0) return false;
+      if (ledgerFeeFilter !== 'all' && member.totalPaid === 0 && member.totalDue === 0) return false;
 
       // Search filter
       const searchLower = financialTransparencySearch.toLowerCase();
@@ -738,7 +850,7 @@ export default function App() {
       
       return true;
     });
-  }, [allUsers, feeStructures, paymentSubmissions, financialTransparencySearch, financialTransparencyFilter, selectedFeeFilter, membershipSettings, executiveMembers]);
+  }, [allUsers, feeStructures, paymentSubmissions, financialTransparencySearch, financialTransparencyFilter, ledgerFeeFilter, membershipSettings, executiveMembers, registrations, ledgerProgramFilter]);
 
   const downloadFinancialReport = () => {
     const headers = ['Member Name', 'Member ID', 'Email', 'Total Paid (BDT)', 'Total Due (BDT)', 'Pending (BDT)'];
@@ -939,42 +1051,189 @@ export default function App() {
 
   // Finance Ledger State
   const [financeEntries, setFinanceEntries] = useState<FinanceEntry[]>([]);
+  const uniqueCategories = useMemo(() => {
+    const defaultCategories = ['Membership', 'Donation', 'Event', 'Office', 'Program Fee', 'Sponsorship'];
+    const entryCategories = financeEntries.map(e => e.category).filter(Boolean);
+    return Array.from(new Set([...defaultCategories, ...entryCategories])).sort();
+  }, [financeEntries]);
+
+  // Search, Filter, and Sort states for Finance Ledger
+  const [financeSearch, setFinanceSearch] = useState('');
+  const [financeTypeFilter, setFinanceTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
+  const [financeCategoryFilter, setFinanceCategoryFilter] = useState('all');
+  const [financeSortField, setFinanceSortField] = useState<'date' | 'amount'>('date');
+  const [financeSortOrder, setFinanceSortOrder] = useState<'asc' | 'desc'>('desc');
+
   const [showFinanceForm, setShowFinanceForm] = useState(false);
   const [financeForm, setFinanceForm] = useState({
     type: 'income' as 'income' | 'expense',
     amount: 0,
     description: '',
     category: '',
-    date: new Date().toISOString().split('T')[0]
+    source: '',
+    date: new Date().toISOString().split('T')[0],
+    programId: '',
+    attachmentUrl: '',
+    details: '',
+    incomeSourceType: 'manual' as 'manual' | 'sponsorship',
+    sponsorshipId: ''
   });
 
-  const consolidatedFinanceLedger = useMemo(() => {
-    const entries: any[] = [...financeEntries.map(e => ({ ...e, isAuto: false }))];
+  const nextUserProgram = useMemo(() => {
+    if (!user || !registrations.length || !programs.length) return null;
     
-    // 1. Add registration fees from allUsers
-    allUsers.forEach(u => {
-      // Show if they have a payment amount and are in a status that suggests money was received/pending
-      if (u.paymentAmount && (u.membershipStatus === 'approved' || u.membershipStatus === 'pending_finance' || u.membershipStatus === 'pending_secretary')) {
-        const date = (u.paymentSubmittedAt && typeof u.paymentSubmittedAt === 'string') 
-          ? u.paymentSubmittedAt.split('T')[0] 
-          : safeToDate(u.paymentSubmittedAt || u.createdAt).toISOString().split('T')[0];
+    const confirmedUpcoming = registrations
+      .filter(r => r.userId === user.uid && (r.status === 'confirmed' || r.status === 'pending'))
+      .map(r => {
+        const program = programs.find(p => p.id === r.programId);
+        if (!program) return null;
         
-        entries.push({
-          id: `reg-${u.id}`,
-          type: 'income',
-          amount: Number(u.paymentAmount),
-          description: `Registration: ${u.name || 'Member'} ${u.memberCode ? `(${u.memberCode})` : ''}`,
-          category: 'Registration',
-          date: date,
-          recordedBy: 'System',
-          isAuto: true
-        });
+        const progDate = new Date(program.date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        if (progDate <= today) return null;
+        
+        const diffTime = progDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        return {
+          registration: r,
+          program: program,
+          daysRemaining: diffDays
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .sort((a, b) => a.daysRemaining - b.daysRemaining);
+      
+    return confirmedUpcoming.length > 0 ? confirmedUpcoming[0] : null;
+  }, [user, registrations, programs]);
+
+  const availableProgramsToRegister = useMemo(() => {
+    if (!user || !programs.length) return [];
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return programs.filter(program => {
+      // 1. Registration must be enabled
+      if (!program.registrationEnabled) return false;
+      
+      // 2. Check deadline
+      if (program.registrationDeadline) {
+        const deadline = new Date(program.registrationDeadline);
+        if (deadline < today) return false;
+      }
+      
+      // 3. User must not be registered already
+      const isRegistered = registrations.some(r => r.userId === user.uid && r.programId === program.id);
+      return !isRegistered;
+    });
+  }, [user, registrations, programs]);
+
+  const sortedPrograms = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return [...programs].sort((a, b) => {
+      const aIsActive = a.registrationEnabled && (!a.registrationDeadline || new Date(a.registrationDeadline) >= today);
+      const bIsActive = b.registrationEnabled && (!b.registrationDeadline || new Date(b.registrationDeadline) >= today);
+
+      // Primary sort: Active registration on top
+      if (aIsActive && !bIsActive) return -1;
+      if (!aIsActive && bIsActive) return 1;
+
+      // Secondary sort: Featured items next
+      if (a.featured && !b.featured) return -1;
+      if (!a.featured && b.featured) return 1;
+
+      // Tertiary sort: Newest date first
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      return dateB - dateA;
+    });
+  }, [programs]);
+
+  const homePrograms = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return sortedPrograms
+      .filter(p => {
+        const isActive = p.registrationEnabled && (!p.registrationDeadline || new Date(p.registrationDeadline) >= today);
+        return isActive || p.featured;
+      })
+      .slice(0, 5);
+  }, [sortedPrograms]);
+
+  const filteredPrograms = useMemo(() => {
+    if (!programHistorySearch) return sortedPrograms;
+    const q = programHistorySearch.toLowerCase();
+    return sortedPrograms.filter(p => 
+      p.title.toLowerCase().includes(q) || 
+      (p.location && p.location.toLowerCase().includes(q)) ||
+      (p.category && p.category.toLowerCase().includes(q)) ||
+      p.date.toLowerCase().includes(q)
+    );
+  }, [sortedPrograms, programHistorySearch]);
+
+  const consolidatedFinanceLedger = useMemo(() => {
+    let entries: any[] = [];
+    
+    // 1. Manual Finance Entries
+    financeEntries.forEach(e => {
+      let include = false;
+      if (ledgerFeeFilter === 'all') {
+        include = true;
+      } else if (ledgerFeeFilter === 'programs') {
+        // Include if explicitly linked to a program, or if category is related to programs/events
+        const isProgramCategory = e.category === 'Program Fee' || e.category === 'Event' || e.category?.toLowerCase().includes('program');
+        if (e.programId || isProgramCategory) {
+          // Filter by programId if a specific program is selected in the sub-filter
+          if (ledgerProgramFilter !== 'all' && e.programId && e.programId !== ledgerProgramFilter) {
+            return;
+          }
+          include = true;
+        }
+      }
+      
+      if (include) {
+        entries.push({ ...e, isAuto: false });
       }
     });
+    
+    // 2. Add registration fees from allUsers
+    if (ledgerFeeFilter === 'all' || ledgerFeeFilter === 'reg-fee') {
+      allUsers.forEach(u => {
+        if (u.paymentAmount && (u.membershipStatus === 'approved' || u.membershipStatus === 'pending_finance' || u.membershipStatus === 'pending_secretary')) {
+          const date = (u.paymentSubmittedAt && typeof u.paymentSubmittedAt === 'string') 
+            ? u.paymentSubmittedAt.split('T')[0] 
+            : safeToDate(u.paymentSubmittedAt || u.createdAt).toISOString().split('T')[0];
+          
+          entries.push({
+            id: `reg-${u.id}`,
+            type: 'income',
+            amount: Number(u.paymentAmount),
+            description: `Registration: ${u.name || 'Member'} ${u.memberCode ? `(${u.memberCode})` : ''}`,
+            category: 'Registration',
+            date: date,
+            recordedBy: 'System',
+            isAuto: true
+          });
+        }
+      });
+    }
 
-    // 2. Add approved payment submissions (Monthly/Other fees)
+    // 3. Add approved payment submissions (Monthly/Other fees)
     paymentSubmissions.forEach(s => {
       if (s.status === 'approved') {
+        // Filter by feeId if a specific fee structure is selected
+        if (ledgerFeeFilter !== 'all' && ledgerFeeFilter !== 'reg-fee' && ledgerFeeFilter !== 'programs') {
+          if (s.feeId !== ledgerFeeFilter) return;
+        } else if (ledgerFeeFilter === 'reg-fee' || ledgerFeeFilter === 'programs') {
+          return; // Skip if we only want reg fees or programs
+        }
+
         const member = allUsers.find(u => u.id === s.userId);
         const date = s.paymentDate || safeToDate(s.submittedAt).toISOString().split('T')[0];
         
@@ -986,14 +1245,92 @@ export default function App() {
           category: s.feeType || 'Membership',
           date: date,
           recordedBy: 'System',
-          isAuto: true
+          isAuto: true,
+          feeId: s.feeId
         });
       }
     });
 
+    // 4. Add confirmed program registrations
+    if (ledgerFeeFilter === 'all' || ledgerFeeFilter === 'programs') {
+      registrations.forEach(r => {
+        // Filter by programId if ledgerProgramFilter is active
+        if (ledgerFeeFilter === 'programs' && ledgerProgramFilter !== 'all' && r.programId !== ledgerProgramFilter) {
+          return;
+        }
+
+        // Check if a real finance entry already exists for this registration to prevent double counting
+        const hasRealEntry = financeEntries.some(f => 
+          f.userId === r.userId && 
+          f.programId === r.programId && 
+          f.category === 'Program Fee'
+        );
+
+        if ((r.status === 'confirmed' || r.paymentStatus === 'completed') && !hasRealEntry) {
+          const date = r.submittedAt ? r.submittedAt.split('T')[0] : new Date().toISOString().split('T')[0];
+          entries.push({
+            id: `prog-${r.id}`,
+            type: 'income',
+            amount: Number(r.amount),
+            description: `Program: ${r.programTitle} - ${r.userName}`,
+            category: 'Program Fee',
+            date: date,
+            recordedBy: 'System',
+            isAuto: true,
+            programId: r.programId,
+            userId: r.userId,
+            profilePicture: allUsers.find(u => u.id === r.userId)?.profilePicture || allUsers.find(u => u.id === r.userId)?.photoURL
+          });
+        }
+      });
+    }
+
     // Sort by date desc
     return entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [financeEntries, allUsers, paymentSubmissions]);
+  }, [financeEntries, allUsers, paymentSubmissions, registrations, ledgerFeeFilter, ledgerProgramFilter]);
+
+  const filteredAndSortedLedger = useMemo(() => {
+    let result = [...consolidatedFinanceLedger];
+
+    // Filter by Search
+    if (financeSearch) {
+      const q = financeSearch.toLowerCase();
+      result = result.filter(e => 
+        e.description.toLowerCase().includes(q) || 
+        (e.source && e.source.toLowerCase().includes(q)) ||
+        e.category.toLowerCase().includes(q)
+      );
+    }
+
+    // Filter by Type
+    if (financeTypeFilter !== 'all') {
+      result = result.filter(e => e.type === financeTypeFilter);
+    }
+
+    // Filter by Category
+    if (financeCategoryFilter !== 'all') {
+      result = result.filter(e => e.category === financeCategoryFilter);
+    }
+
+    // Sorting
+    result.sort((a, b) => {
+      let valA: any = a[financeSortField];
+      let valB: any = b[financeSortField];
+
+      if (financeSortField === 'amount') {
+        valA = Number(valA);
+        valB = Number(valB);
+      } else {
+        valA = new Date(valA).getTime();
+        valB = new Date(valB).getTime();
+      }
+
+      if (financeSortOrder === 'asc') return valA - valB;
+      return valB - valA;
+    });
+
+    return result;
+  }, [consolidatedFinanceLedger, financeSearch, financeTypeFilter, financeCategoryFilter, financeSortField, financeSortOrder]);
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [membershipPaymentForm, setMembershipPaymentForm] = useState({ transactionId: '', method: 'bkash' });
@@ -1072,7 +1409,50 @@ export default function App() {
     }
   };
 
-  const [fullScreenImage, setFullScreenImage] = useState<number | null>(null);
+  const handleSubmitRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !registeringProgram || !userProfile) return;
+    
+    // Safety check for membership
+    if (userProfile.membershipStatus !== 'paid' && userProfile.membershipStatus !== 'approved') {
+      alert('You must be a verified association member to register for programs.');
+      return;
+    }
+
+    if (!regTransactionId) {
+      alert('Please provide the transaction ID for the payment.');
+      return;
+    }
+
+    setSubmittingRegistration(true);
+    try {
+      const registration: Omit<ProgramRegistration, 'id'> = {
+        programId: registeringProgram.id,
+        programTitle: registeringProgram.title,
+        userId: user.uid,
+        userName: userProfile.name || user.displayName || 'Member',
+        userEmail: userProfile.email || user.email || '',
+        status: 'pending',
+        answers: registrationAnswers,
+        submittedAt: new Date().toISOString(),
+        amount: registeringProgram.registrationFee || 0,
+        paymentMethod: regPaymentMethod,
+        transactionId: regTransactionId,
+        paymentStatus: 'pending'
+      };
+      
+      await addDoc(collection(db, 'programRegistrations'), registration);
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Registration submitted successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+      setRegisteringProgram(null);
+      setRegistrationAnswers({});
+      setRegTransactionId('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'programRegistrations');
+    } finally {
+      setSubmittingRegistration(false);
+    }
+  };
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
   const [programForm, setProgramForm] = useState({
     title: '',
@@ -1086,15 +1466,23 @@ export default function App() {
     featured: false,
     registrationFee: 0,
     registrationDeadline: new Date().toISOString().split('T')[0],
+    registrationEnabled: false,
+    registrationFields: [] as { id: string; label: string; type: 'text' | 'select'; options?: string[]; required: boolean }[],
     highlights: [] as string[],
     gallery: [] as string[],
+    driveLink: '',
     budget: {
       income: [] as { item: string; amount: number }[],
       expense: [] as { item: string; amount: number }[]
     }
   });
 
-  // Auto-slide logic for Programs
+  useEffect(() => {
+    const q = query(collection(db, 'programRegistrations'), orderBy('submittedAt', 'desc'));
+    return onSnapshot(q, (snapshot) => {
+      setRegistrations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProgramRegistration)));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'programRegistrations'));
+  }, []);
   useEffect(() => {
     // Auth Listener
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
@@ -1300,6 +1688,17 @@ export default function App() {
       console.error("Notices fetch issue:", error);
     });
 
+    // Sponsorships Listener
+    const unsubscribeSponsorships = onSnapshot(collection(db, 'sponsorships'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Sponsorship[];
+      setSponsorships(data);
+    }, (error) => {
+      console.error("Sponsorships fetch issue:", error);
+    });
+
     // Executive Committee Listener
     const unsubscribeEC = onSnapshot(query(collection(db, 'executiveCommittee'), orderBy('order', 'asc')), (snapshot) => {
       const data = snapshot.docs.map(doc => ({
@@ -1366,8 +1765,8 @@ export default function App() {
     }
 
     const programTimer = setInterval(() => {
-      setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, programs.length));
-    }, 5000);
+      setCurrentProgramIndex((prev) => (prev + 1) % Math.max(1, homePrograms.length));
+    }, 10000);
 
     return () => {
       clearInterval(programTimer);
@@ -1376,6 +1775,7 @@ export default function App() {
       unsubscribePortal();
       unsubscribePrograms();
       unsubscribeNotices();
+      unsubscribeSponsorships();
       unsubscribeEC();
       unsubscribeAccounts?.();
       unsubscribeFinances?.();
@@ -1384,7 +1784,80 @@ export default function App() {
       unsubscribeFees();
       unsubscribePayments();
     };
-  }, [programs.length, isAdmin, specializedRole, user?.uid]);
+  }, [homePrograms.length, isAdmin, specializedRole, user?.uid]);
+
+  const handleSponsorshipSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    try {
+      if (editingSponsorship) {
+        const sponsorshipRef = doc(db, 'sponsorships', editingSponsorship.id);
+        await updateDoc(sponsorshipRef, {
+          ...sponsorshipForm,
+          updatedAt: serverTimestamp()
+        });
+        setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Sponsorship updated successfully!' });
+      } else {
+        await addDoc(collection(db, 'sponsorships'), {
+          ...sponsorshipForm,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Sponsorship added successfully!' });
+      }
+      setIsAddingSponsorship(false);
+      setEditingSponsorship(null);
+      setSponsorshipForm({ name: '', address: '', email: '', contactPerson: '', number: '', icon: '' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, editingSponsorship ? OperationType.UPDATE : OperationType.CREATE, 'sponsorships');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleShare = async (program: any) => {
+    const shareData = {
+      title: program.title,
+      text: `Join us for ${program.title} by EDEA Rangpur!`,
+      url: window.location.href
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(window.location.href);
+        setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Link copied to clipboard!' });
+        setTimeout(() => setSaveStatus(null), 3000);
+      }
+    } catch (err) {
+      console.log('Error sharing:', err);
+    }
+  };
+
+  const handleDeleteSponsorship = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this sponsorship?')) return;
+    try {
+      await deleteDoc(doc(db, 'sponsorships', id));
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Sponsorship deleted successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `sponsorships/${id}`);
+    }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const regId = params.get('reg');
+    if (regId && programs.length > 0) {
+      const p = programs.find(prog => prog.id === regId);
+      if (p && p.registrationEnabled) {
+        setRegisteringProgram(p);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
+  }, [programs]);
 
   const handleUpdateMembershipSettings = async (data: any) => {
     setSavingMembershipSettings(true);
@@ -1633,6 +2106,48 @@ export default function App() {
     }
   };
 
+  const handleApproveProgramRegistration = async (reg: ProgramRegistration) => {
+    try {
+      // Check if program is already completed and locked
+      const targetProgram = programs.find(p => p.id === reg.programId);
+      if (targetProgram?.status === 'completed') {
+        return alert('This program is completed and its financial records are locked. You cannot approve new registrations for this program.');
+      }
+
+      await updateDoc(doc(db, 'programRegistrations', reg.id), { 
+        status: 'confirmed',
+        paymentStatus: 'completed'
+      });
+      // create a finance record for transparency
+      await addDoc(collection(db, 'finances'), {
+        amount: reg.amount,
+        type: 'income',
+        description: `Program Fee: ${reg.programTitle} - ${reg.userName}`,
+        category: 'Program Fee',
+        date: new Date().toISOString().split('T')[0],
+        userId: reg.userId,
+        userName: reg.userName,
+        programId: reg.programId,
+        recordedBy: user?.uid || 'System'
+      });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Program registration approved!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'programRegistrations');
+    }
+  };
+
+  const handleRejectProgramRegistration = async (id: string) => {
+    if (!confirm('Reject this program registration?')) return;
+    try {
+      await updateDoc(doc(db, 'programRegistrations', id), { status: 'cancelled' });
+      setSaveStatus({ id: Date.now().toString(), type: 'error', message: 'Program registration rejected.' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'programRegistrations');
+    }
+  };
+
   const handleSaveBranding = async () => {
     if (!isAdmin && specializedRole !== 'admin') return;
     const path = 'config/association';
@@ -1782,12 +2297,24 @@ export default function App() {
         featured: false,
         highlights: [],
         gallery: [],
+        driveLink: '',
         budget: { income: [], expense: [] },
         registrationFee: 0,
         registrationDeadline: new Date().toISOString().split('T')[0]
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  };
+
+  const toggleProgramFeature = async (program: Program) => {
+    try {
+      const programRef = doc(db, 'programs', program.id);
+      await updateDoc(programRef, { featured: !program.featured });
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: `Program ${!program.featured ? 'featured' : 'standardized'} successfully!` });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `programs/${program.id}`);
     }
   };
 
@@ -1798,6 +2325,30 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'programs');
     }
+  };
+
+  const handleAddProgram = () => {
+    setEditingProgram(null);
+    setProgramForm({ 
+      title: '', 
+      category: '', 
+      date: new Date().toISOString().split('T')[0], 
+      location: '', 
+      description: '', 
+      image: '', 
+      status: 'upcoming', 
+      details: '', 
+      featured: false, 
+      highlights: [], 
+      gallery: [], 
+      driveLink: '',
+      budget: { income: [], expense: [] },
+      registrationFee: 0,
+      registrationDeadline: new Date().toISOString().split('T')[0],
+      registrationEnabled: false,
+      registrationFields: []
+    });
+    setIsAddingProgram(true);
   };
 
   const openEditProgram = (p: Program) => {
@@ -1814,15 +2365,289 @@ export default function App() {
       featured: p.featured || false,
       highlights: p.highlights || [],
       gallery: p.gallery || [],
+      driveLink: p.driveLink || '',
       budget: p.budget || { income: [], expense: [] },
       registrationFee: p.registrationFee || 0,
-      registrationDeadline: p.registrationDeadline || new Date().toISOString().split('T')[0]
+      registrationDeadline: p.registrationDeadline || new Date().toISOString().split('T')[0],
+      registrationEnabled: p.registrationEnabled || false,
+      registrationFields: p.registrationFields || []
     });
     setIsAddingProgram(true);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* Universal Success Toast */}
+      <AnimatePresence>
+        {saveStatus && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[300]"
+          >
+            <div className={`px-8 py-4 rounded-2xl shadow-2xl border border-white/10 flex items-center gap-4 min-w-[320px] ${
+              saveStatus.type === 'error' ? 'bg-red-600' : 'bg-slate-900'
+            } text-white`}>
+              <div className={`w-10 h-10 ${saveStatus.type === 'error' ? 'bg-red-500' : 'bg-green-500'} rounded-full flex items-center justify-center shrink-0`}>
+                {saveStatus.type === 'error' ? <X size={20} /> : <CheckCircle2 size={20} />}
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/50 mb-0.5">
+                  {saveStatus.type === 'error' ? 'Error' : 'Success'}
+                </p>
+                <p className="font-bold text-sm tracking-tight">{saveStatus.message}</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {registeringProgram && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden my-auto"
+            >
+              <div className="relative h-48 sm:h-64 overflow-hidden">
+                <img src={registeringProgram.image} alt="" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-8">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="px-3 py-1 bg-brand-primary text-white text-[10px] font-black uppercase tracking-widest rounded-full">Registration Form</span>
+                    <span className="px-3 py-1 bg-white/20 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest rounded-full border border-white/20">
+                      {registeringProgram.category}
+                    </span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-display font-bold text-white leading-tight">{registeringProgram.title}</h2>
+                </div>
+                <button 
+                  onClick={() => { setRegisteringProgram(null); setRegistrationAnswers({}); }}
+                  className="absolute top-6 right-6 w-10 h-10 bg-black/20 backdrop-blur-md hover:bg-black/40 text-white rounded-full flex items-center justify-center transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8">
+                {!user ? (
+                  <div className="py-12 text-center space-y-6">
+                    <div className="w-20 h-20 bg-brand-primary/5 rounded-full flex items-center justify-center mx-auto text-brand-primary">
+                      <LogIn size={40} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900 mb-2">Login Required</h3>
+                      <p className="text-slate-500 max-w-xs mx-auto">Please login with your association account to register for this program.</p>
+                    </div>
+                    <button 
+                      onClick={() => { setShowStaffLogin(true); }}
+                      className="bg-brand-primary text-white px-10 py-4 rounded-2xl text-sm font-bold uppercase tracking-widest shadow-xl shadow-brand-primary/20"
+                    >
+                      Login Now
+                    </button>
+                  </div>
+                ) : (userProfile?.membershipStatus !== 'paid' && userProfile?.membershipStatus !== 'approved') ? (
+                  <div className="py-12 text-center space-y-6">
+                    <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-500">
+                      <ShieldCheck size={40} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900 mb-2">Membership Required</h3>
+                      <p className="text-slate-500 max-w-xs mx-auto">This registration is exclusively for verified association members. Please complete your membership process first.</p>
+                    </div>
+                    <button 
+                      onClick={() => { setRegisteringProgram(null); setShowMemberDashboard(true); }}
+                      className="bg-brand-primary text-white px-10 py-4 rounded-2xl text-sm font-bold uppercase tracking-widest"
+                    >
+                      Go to Membership Dashboard
+                    </button>
+                  </div>
+                ) : registrations.some(r => r.programId === registeringProgram.id && r.userId === user?.uid) ? (
+                  <div className="py-12 text-center space-y-6">
+                    {(() => {
+                      const existingReg = registrations.find(r => r.programId === registeringProgram.id && r.userId === user?.uid);
+                      return (
+                        <>
+                          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto ${
+                            existingReg?.status === 'confirmed' ? 'bg-green-100 text-green-600' : 
+                            existingReg?.status === 'cancelled' ? 'bg-red-100 text-red-600' : 
+                            'bg-brand-primary/10 text-brand-primary'
+                          }`}>
+                            {existingReg?.status === 'confirmed' ? <CheckCircle2 size={40} /> : <Clock size={40} />}
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">Already Registered</h3>
+                            <p className="text-slate-500 max-w-xs mx-auto mb-4">You have already submitted a registration for this program.</p>
+                            <div className="inline-block px-4 py-2 bg-slate-100 rounded-full">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2">Status:</span>
+                              <span className={`text-[10px] font-black uppercase tracking-widest ${
+                                existingReg?.status === 'confirmed' ? 'text-green-600' : 
+                                existingReg?.status === 'cancelled' ? 'text-red-600' : 
+                                'text-brand-primary'
+                              }`}>
+                                {existingReg?.status}
+                              </span>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => { setRegisteringProgram(null); }}
+                            className="bg-slate-900 text-white px-10 py-4 rounded-2xl text-sm font-bold uppercase tracking-widest"
+                          >
+                            Close
+                          </button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmitRegistration} className="space-y-8">
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 pb-2">Your Personal Details</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Name</p>
+                          <p className="text-sm font-bold text-slate-700">{userProfile?.name}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Member ID</p>
+                          <p className="text-sm font-bold text-slate-700">{userProfile?.memberCode}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Email</p>
+                          <p className="text-sm font-bold text-slate-700">{userProfile?.email}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Phone</p>
+                          <p className="text-sm font-bold text-slate-700">{userProfile?.phone || 'N/A'}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {registeringProgram.registrationFields && registeringProgram.registrationFields.length > 0 && (
+                      <div className="space-y-6">
+                        <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 pb-2">Additional Information</h4>
+                        <div className="space-y-4">
+                          {registeringProgram.registrationFields.map((field) => (
+                            <div key={field.id} className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">{field.label} {field.required && <span className="text-red-500">*</span>}</label>
+                              {field.type === 'select' ? (
+                                <select 
+                                  required={field.required}
+                                  value={registrationAnswers[field.label] || ''}
+                                  onChange={(e) => setRegistrationAnswers({...registrationAnswers, [field.label]: e.target.value})}
+                                  className="w-full p-4 bg-slate-50 rounded-xl outline-none border border-slate-100 focus:border-brand-primary"
+                                >
+                                  <option value="">Select Option</option>
+                                  {(field.options || []).map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input 
+                                  type="text"
+                                  required={field.required}
+                                  value={registrationAnswers[field.label] || ''}
+                                  onChange={(e) => setRegistrationAnswers({...registrationAnswers, [field.label]: e.target.value})}
+                                  className="w-full p-4 bg-slate-50 rounded-xl outline-none border border-slate-100 focus:border-brand-primary"
+                                  placeholder={`Enter your ${field.label.toLowerCase()}`}
+                                />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-6">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 pb-2">Payment Details</h4>
+                      
+                      <div className="bg-brand-primary/5 p-6 rounded-2xl border border-brand-primary/10">
+                        <div className="flex items-center justify-between mb-4">
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Registration Fee</p>
+                          <p className="text-2xl font-display font-bold text-brand-primary">৳ {registeringProgram.registrationFee || 0}</p>
+                        </div>
+                        
+                        <div className="space-y-3 bg-white/50 p-4 rounded-xl border border-white">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Payment Instructions</p>
+                          <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                            {membershipSettings?.paymentInstructions || 'Please pay the registration fee to the numbers below and provide the transaction ID.'}
+                          </p>
+                          <div className="flex gap-4 pt-2">
+                            {membershipSettings?.bkashNumber && (
+                              <div className="flex-1 text-center py-2 bg-[#d12053]/5 rounded-lg border border-[#d12053]/10">
+                                <p className="text-[8px] font-black uppercase tracking-tighter text-[#d12053]">bKash</p>
+                                <p className="text-[10px] font-bold text-[#d12053]">{membershipSettings.bkashNumber}</p>
+                              </div>
+                            )}
+                            {membershipSettings?.nagadNumber && (
+                              <div className="flex-1 text-center py-2 bg-[#f6921e]/5 rounded-lg border border-[#f6921e]/10">
+                                <p className="text-[8px] font-black uppercase tracking-tighter text-[#f6921e]">Nagad</p>
+                                <p className="text-[10px] font-bold text-[#f6921e]">{membershipSettings.nagadNumber}</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Method</label>
+                          <select 
+                            value={regPaymentMethod}
+                            onChange={(e) => setRegPaymentMethod(e.target.value as any)}
+                            className="w-full p-4 bg-slate-50 rounded-xl outline-none border border-slate-100 focus:border-brand-primary text-xs font-bold"
+                          >
+                            <option value="bkash">bKash</option>
+                            <option value="nagad">Nagad</option>
+                            <option value="bank">Bank Transfer</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Transaction ID</label>
+                          <input 
+                            required
+                            type="text"
+                            placeholder="TXNID123456"
+                            value={regTransactionId}
+                            onChange={(e) => setRegTransactionId(e.target.value.toUpperCase())}
+                            className="w-full p-4 bg-slate-50 rounded-xl outline-none border border-slate-100 focus:border-brand-primary text-xs font-bold tracking-widest uppercase"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-6">
+                      <button 
+                        type="submit"
+                        disabled={submittingRegistration}
+                        className="w-full bg-brand-primary text-white py-4 rounded-2xl text-sm font-black uppercase tracking-[0.2em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-3"
+                      >
+                        {submittingRegistration ? (
+                          <>
+                            <Loader2 size={18} className="animate-spin" />
+                            Submitting...
+                          </>
+                        ) : (
+                          <>
+                            <FileText size={18} />
+                            Complete Registration
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Navigation */}
       <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -2485,7 +3310,7 @@ export default function App() {
             <p className="text-slate-500 text-lg">Stay updated with our ongoing and upcoming initiatives across the division.</p>
           </div>
           
-          {programs.length > 0 ? (
+          {homePrograms.length > 0 ? (
             <div className="relative bg-white rounded-[2rem] border border-slate-200 overflow-hidden shadow-xl lg:h-[550px]">
               <AnimatePresence mode="wait">
                 <motion.div 
@@ -2499,8 +3324,8 @@ export default function App() {
                   {/* Carousel Image */}
                   <div className="relative aspect-[3/2] lg:aspect-auto lg:h-full overflow-hidden shrink-0 group">
                     <img 
-                      src={programs[currentProgramIndex]?.image} 
-                      alt={programs[currentProgramIndex]?.title}
+                      src={homePrograms[currentProgramIndex]?.image} 
+                      alt={homePrograms[currentProgramIndex]?.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[2000ms]"
                     />
                     <div className="absolute inset-0 bg-slate-900/10 group-hover:bg-transparent transition-colors duration-700" />
@@ -2508,76 +3333,96 @@ export default function App() {
                   </div>
 
                   {/* Carousel Content */}
-                  <div className="p-8 lg:p-12 flex flex-col justify-center bg-white relative h-full">
-                    <div className="flex items-center gap-3 mb-6">
-                      {(programs[currentProgramIndex]?.status === 'upcoming' || !programs[currentProgramIndex]?.status) && (
-                        <span className="px-3 py-1 bg-brand-primary text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-full shadow-lg shadow-brand-primary/20 flex items-center gap-1.5 animate-pulse">
-                          <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                          Upcoming
-                        </span>
-                      )}
-                      <div className="flex items-center gap-2 text-brand-secondary text-sm font-bold opacity-80">
-                        <Calendar size={16} />
-                        {programs[currentProgramIndex]?.date}
-                      </div>
+                  <div className="p-8 lg:p-12 flex flex-col justify-center relative h-full overflow-hidden">
+                    {/* Glassmorphism Background Layer */}
+                    <div className="absolute inset-0 z-0 select-none pointer-events-none">
+                      <img 
+                        src={homePrograms[currentProgramIndex]?.image} 
+                        alt=""
+                        className="w-full h-full object-cover blur-[100px] scale-150 transform-gpu opacity-50"
+                      />
+                      <div className="absolute inset-0 bg-white/80 backdrop-blur-xl" />
                     </div>
-                    
-                    <h3 className="text-3xl font-display font-bold text-slate-900 mb-6 italic">
-                      {programs[currentProgramIndex]?.title}
-                    </h3>
-                    
-                    <p className="text-slate-600 mb-8 leading-relaxed line-clamp-4 lg:line-clamp-none whitespace-pre-wrap">
-                      {programs[currentProgramIndex]?.description}
-                    </p>
 
-                    {/* Program Info Grid */}
-                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-8">
-                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1">
-                           <Calendar size={10} className="text-brand-secondary" /> Date
+                    <div className="relative z-10 flex flex-col h-full">
+                      <div className="flex items-center gap-3 mb-6">
+                        {(homePrograms[currentProgramIndex]?.status === 'upcoming' || !homePrograms[currentProgramIndex]?.status) && (
+                          <span className="px-3 py-1 bg-brand-primary text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-full shadow-lg shadow-brand-primary/20 flex items-center gap-1.5 animate-pulse">
+                            <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                            Upcoming
+                          </span>
+                        )}
+
+                        <div className="flex items-center gap-2 text-brand-secondary text-sm font-bold opacity-80">
+                          <Calendar size={16} />
+                          {homePrograms[currentProgramIndex]?.date}
                         </div>
-                        <div className="text-sm font-bold text-slate-700">{programs[currentProgramIndex]?.date}</div>
                       </div>
                       
-                      {programs[currentProgramIndex]?.registrationFee !== undefined && (
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1">
-                             <CreditCard size={10} className="text-brand-primary" /> Fee
-                          </div>
-                          <div className="text-sm font-bold text-brand-primary">৳ {programs[currentProgramIndex]?.registrationFee}</div>
-                        </div>
-                      )}
+                      <h3 className="text-3xl font-display font-bold text-slate-800 mb-6 italic tracking-tight">
+                        {homePrograms[currentProgramIndex]?.title}
+                      </h3>
+                      
+                      <p className="text-slate-600 mb-6 leading-relaxed line-clamp-4 lg:line-clamp-none whitespace-pre-wrap font-medium">
+                        {homePrograms[currentProgramIndex]?.description}
+                      </p>
 
-                      {programs[currentProgramIndex]?.registrationDeadline && (
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1">
-                             <Clock size={10} className="text-brand-accent" /> Last Date
+                      {/* Program Info Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                        {homePrograms[currentProgramIndex]?.registrationFee !== undefined && (homePrograms[currentProgramIndex]?.status === 'upcoming' || !homePrograms[currentProgramIndex]?.status) && (
+                          <div className="group/info relative flex flex-col justify-center p-5 bg-brand-primary/5 backdrop-blur-sm rounded-2xl border border-brand-primary/20 transition-all hover:bg-white hover:shadow-xl hover:shadow-brand-primary/10 hover:-translate-y-1 overflow-hidden">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-brand-primary/10 rounded-full -mr-12 -mt-12 transition-transform group-hover/info:scale-150" />
+                            <div className="relative z-10 w-full">
+                              <div className="text-[10px] font-black uppercase tracking-[0.15em] text-brand-primary/70 mb-1 whitespace-nowrap">Registration Fee</div>
+                              <div className="text-2xl font-mono font-bold text-brand-primary tracking-tighter">৳ {homePrograms[currentProgramIndex]?.registrationFee}</div>
+                            </div>
                           </div>
-                          <div className="text-sm font-bold text-slate-700">{programs[currentProgramIndex]?.registrationDeadline}</div>
-                        </div>
-                      )}
-                    </div>
+                        )}
 
-                    {/* Show actual highlights if they exist */}
-                    {programs[currentProgramIndex]?.highlights && programs[currentProgramIndex]!.highlights!.length > 0 && (
-                      <div className="space-y-2 mb-10">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Program Highlights</p>
-                        {programs[currentProgramIndex]!.highlights!.map((item, i) => (
-                          <div key={i} className="flex items-center gap-3 text-sm text-slate-500">
-                            <div className="w-1 h-1 rounded-full bg-brand-accent" />
-                            {item}
+                        {homePrograms[currentProgramIndex]?.registrationDeadline && (homePrograms[currentProgramIndex]?.status === 'upcoming' || !homePrograms[currentProgramIndex]?.status) && (
+                          <div className="group/info relative flex flex-col justify-center p-5 bg-brand-accent/5 backdrop-blur-sm rounded-2xl border border-brand-accent/20 transition-all hover:bg-white hover:shadow-xl hover:shadow-brand-accent/10 hover:-translate-y-1 overflow-hidden">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-brand-accent/10 rounded-full -mr-12 -mt-12 transition-transform group-hover/info:scale-150" />
+                            <div className="relative z-10 w-full">
+                              <div className="text-[10px] font-black uppercase tracking-[0.15em] text-brand-accent/70 mb-1 whitespace-nowrap">Last Date</div>
+                              <div className="text-2xl font-mono font-bold text-slate-800 tracking-tighter">{homePrograms[currentProgramIndex]?.registrationDeadline}</div>
+                            </div>
                           </div>
-                        ))}
+                        )}
                       </div>
-                    )}
 
-                    <div className="mt-auto">
-                      <button 
-                        onClick={() => setSelectedProgram(programs[currentProgramIndex])}
-                        className="w-full lg:w-fit bg-brand-primary text-white px-8 py-4 rounded-xl font-bold hover:bg-brand-primary/95 transition-all shadow-lg shadow-brand-primary/20 flex items-center justify-center lg:justify-start gap-2 active:scale-95"
-                      >
-                        View Full Details <ChevronRight size={18} />
-                      </button>
+                      {/* Show actual highlights if they exist (Limit based on status) */}
+                      {homePrograms[currentProgramIndex]?.highlights && homePrograms[currentProgramIndex]!.highlights!.length > 0 && (
+                        <div className="space-y-2 mb-6">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500/80 mb-2">Program Highlights</p>
+                          {homePrograms[currentProgramIndex]!.highlights!.slice(0, (homePrograms[currentProgramIndex]?.status === 'upcoming' || !homePrograms[currentProgramIndex]?.status) ? 3 : 5).map((item, i) => (
+                            <div key={i} className="flex items-center gap-3 text-[15px] text-slate-600 font-medium">
+                              <div className="w-1.5 h-1.5 rounded-full bg-brand-accent shrink-0" />
+                              {item}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="mt-auto flex flex-col sm:flex-row gap-3">
+                        <button 
+                          onClick={() => setSelectedProgram(homePrograms[currentProgramIndex])}
+                          className="flex-1 lg:flex-none bg-brand-primary text-white px-8 py-4 rounded-xl font-bold hover:bg-brand-primary/95 transition-all shadow-lg shadow-brand-primary/20 flex items-center justify-center lg:justify-start gap-2 active:scale-95"
+                        >
+                          View Full Details <ChevronRight size={18} />
+                        </button>
+                        
+                        {homePrograms[currentProgramIndex]?.registrationEnabled && (!homePrograms[currentProgramIndex]?.registrationDeadline || new Date(homePrograms[currentProgramIndex]!.registrationDeadline!) >= new Date()) && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRegisteringProgram(homePrograms[currentProgramIndex]);
+                            }}
+                            className="flex-1 lg:flex-none bg-brand-accent text-white px-8 py-4 rounded-xl font-bold hover:opacity-90 transition-all shadow-lg shadow-brand-accent/20 flex items-center justify-center lg:justify-start gap-2 active:scale-95"
+                          >
+                            <UserPlus size={18} /> Register Now
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -2585,7 +3430,7 @@ export default function App() {
 
               {/* Carousel Indicators */}
               <div className="absolute bottom-6 right-8 flex gap-2 z-20">
-                {programs.map((_, idx) => (
+                {homePrograms.map((_, idx) => (
                   <button
                     key={idx}
                     onClick={(e) => {
@@ -2617,111 +3462,101 @@ export default function App() {
               <h2 className="text-3xl font-display font-medium text-slate-900">Discover all programs</h2>
               <p className="text-slate-500 text-lg">Browse our full history of impactful events and workshops.</p>
             </div>
-            <div className="flex gap-3 pb-2">
-              <button 
-                onClick={() => {
-                  const el = document.getElementById('programs-scroll');
-                  if (el) el.scrollBy({ left: -el.offsetWidth / 2, behavior: 'smooth' });
-                }}
-                className="p-4 border border-slate-200 rounded-full hover:bg-slate-900 hover:text-white transition-all shadow-sm active:scale-95"
-                title="Previous"
-              >
-                <ChevronRight className="rotate-180" size={24} />
-              </button>
-              <button 
-                onClick={() => {
-                  const el = document.getElementById('programs-scroll');
-                  if (el) el.scrollBy({ left: el.offsetWidth / 2, behavior: 'smooth' });
-                }}
-                className="p-4 border border-slate-200 rounded-full hover:bg-slate-900 hover:text-white transition-all shadow-sm active:scale-95"
-                title="Next"
-              >
-                <ChevronRight size={24} />
-              </button>
-            </div>
           </div>
 
           <div 
-            id="programs-scroll"
-            className="flex gap-4 sm:gap-6 lg:gap-8 overflow-x-auto pb-10 scrollbar-hide snap-x no-scrollbar"
-            style={{ 
-              msOverflowStyle: 'none', 
-              scrollbarWidth: 'none',
-              WebkitOverflowScrolling: 'touch'
-            }}
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 pb-10"
           >
-            {[...programs].map((program, idx) => (
-              <motion.button
-                key={`${program.id}-${idx}`}
-                whileHover={{ y: -8 }}
-                onClick={() => setSelectedProgram(program)}
-                className="flex flex-col shrink-0 w-[280px] sm:w-[320px] bg-white rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] overflow-hidden group snap-start transition-all duration-300 hover:shadow-xl hover:shadow-brand-primary/10"
-              >
-                <div className="relative h-48 overflow-hidden">
-                  <img 
-                    src={program.image} 
-                    alt={program.title} 
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2000ms]" 
-                  />
-                  <div className="absolute top-4 left-4 flex flex-col gap-2">
-                    {(program.status === 'upcoming' || !program.status) && (
-                      <span className="w-fit px-3 py-1 bg-brand-primary text-white rounded-full text-[8px] font-bold uppercase tracking-widest shadow-md">
-                        Upcoming
-                      </span>
-                    )}
-                    <span className="px-3 py-1 bg-white/90 backdrop-blur-sm text-brand-primary rounded-full text-[8px] font-black uppercase tracking-widest shadow-sm border border-slate-100">
-                      {program.category}
-                    </span>
+            {sortedPrograms.map((program, idx) => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const isActive = program.registrationEnabled && (!program.registrationDeadline || new Date(program.registrationDeadline) >= today);
+
+              return (
+                <motion.div
+                  key={`${program.id}-${idx}`}
+                  whileHover={{ y: -8 }}
+                  className="flex flex-col bg-white rounded-[24px] border border-slate-100 shadow-[0_4px_30px_-10px_rgba(0,0,0,0.08)] overflow-hidden group transition-all duration-500 hover:shadow-2xl hover:shadow-brand-primary/10 h-full"
+                >
+                  {/* Top Clear Image (4:3) */}
+                  <div 
+                    onClick={() => setSelectedProgram(program)}
+                    className="relative aspect-[4/3] overflow-hidden cursor-pointer"
+                  >
+                    <img 
+                      src={program.image} 
+                      alt={program.title}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[1500ms] ease-out" 
+                    />
                   </div>
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <div className="bg-white p-3 rounded-full text-brand-primary shadow-xl scale-0 group-hover:scale-100 transition-transform duration-500">
-                      <ArrowRight size={20} />
-                    </div>
-                  </div>
-                </div>
-                
-                  <div className="p-6 text-left space-y-3">
-                    <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-                      <Calendar size={12} className="text-brand-primary/50" />
-                      {program.date}
-                    </div>
-                    <h4 className="text-lg font-display font-bold text-slate-800 line-clamp-1 leading-tight group-hover:text-brand-primary transition-colors">
-                      {program.title}
-                    </h4>
+                  
+                  {/* Bottom Blurred Image with Content (4:3) */}
+                  <div className="relative aspect-[4/3] overflow-hidden">
+                    {/* Blurred Background */}
+                    <img 
+                      src={program.image} 
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-60" 
+                    />
+                    {/* Dark Gradient Overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-slate-900/40 to-slate-900/80" />
                     
-                    {(program.status === 'upcoming' || !program.status) && (
-                      <div className="flex flex-wrap gap-2 py-1">
-                        {program.registrationFee !== undefined && (
-                          <div className="flex items-center gap-1 px-2 py-1 bg-brand-primary/5 text-brand-primary rounded-lg border border-brand-primary/10">
-                            <CreditCard size={10} />
-                            <span className="text-[9px] font-bold uppercase">৳ {program.registrationFee}</span>
-                          </div>
-                        )}
-                        {program.registrationDeadline && (
-                          <div className="flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-500 rounded-lg border border-slate-100">
-                            <Clock size={10} />
-                            <span className="text-[9px] font-bold uppercase">Till {program.registrationDeadline}</span>
-                          </div>
+                    {/* Content Overlay */}
+                    <div className="relative h-full p-6 flex flex-col items-start text-white">
+                      <h4 
+                        onClick={() => setSelectedProgram(program)}
+                        className="text-xl font-display font-bold mb-2 line-clamp-2 leading-tight group-hover:text-brand-accent transition-colors cursor-pointer drop-shadow-md"
+                      >
+                        {program.title}
+                      </h4>
+                      
+                      <div className="flex flex-col gap-1 mb-auto">
+                        <div className="flex items-center gap-1.5 text-white/80 font-medium">
+                          <MapPin size={12} className="text-brand-accent" />
+                          <span className="text-xs truncate">{program.location}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-white/60 font-medium ml-[2px]">
+                          <Calendar size={11} className="opacity-70" />
+                          <span className="text-[10px] tracking-wider uppercase">{program.date}</span>
+                        </div>
+                      </div>
+
+                      <div className="w-full pt-4 mt-auto relative">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleShare(program);
+                          }}
+                          className="absolute -top-10 right-0 p-2.5 bg-white/10 backdrop-blur-md rounded-full border border-white/20 text-white hover:bg-white/20 transition-all active:scale-95 z-20"
+                          title="Share Program"
+                        >
+                          <Share2 size={16} />
+                        </button>
+
+                        {isActive ? (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRegisteringProgram(program);
+                            }}
+                            className="w-full py-3 bg-brand-accent text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-brand-accent/30 flex items-center justify-center gap-2 active:scale-95 group/btn"
+                          >
+                            <UserPlus size={16} /> Register Now
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => setSelectedProgram(program)}
+                            className="w-full py-3 bg-white/10 backdrop-blur-md text-white border border-white/20 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-white/20 transition-all flex items-center justify-center gap-2 active:scale-95"
+                          >
+                            View Details <ChevronRight size={16} />
+                          </button>
                         )}
                       </div>
-                    )}
-
-                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                      {program.description}
-                    </p>
-                  
-                  <div className="pt-4 flex items-center justify-between border-t border-slate-50">
-                    <div className="flex items-center gap-1.5 text-slate-400">
-                      <MapPin size={12} />
-                      <span className="text-[10px] font-bold truncate max-w-[120px]">{program.location}</span>
                     </div>
-                    <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest flex items-center gap-1">
-                      Details <ChevronRight size={14} />
-                    </span>
                   </div>
-                </div>
-              </motion.button>
-            ))}
+                </motion.div>
+              );
+            })}
           </div>
         </section>
 
@@ -2752,29 +3587,39 @@ export default function App() {
             {allUsers.filter(u => u.membershipStatus === 'approved').slice(0, 10).map((member) => (
               <motion.div
                 key={member.id}
-                whileHover={{ y: -5 }}
-                className="bg-white rounded-2xl border-b-4 border-brand-primary/10 hover:border-brand-primary p-2 shadow-sm group transition-all"
+                whileHover={{ y: -8, scale: 1.02 }}
+                className="relative bg-white rounded-[24px] border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] overflow-hidden group transition-all duration-300 hover:shadow-xl hover:shadow-brand-primary/10 flex flex-col h-full"
               >
-                <div className="relative aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-50">
-                  <img 
-                    src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
-                    alt={member.name} 
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-brand-primary/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                {/* Profile Image with Colorful Background Accent */}
+                <div className="relative aspect-[3/4] overflow-hidden bg-brand-primary/5 p-3">
+                  <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/20 via-transparent to-brand-accent/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="w-full h-full rounded-[16px] overflow-hidden border-2 border-white shadow-sm ring-4 ring-brand-primary/5 relative z-10">
+                    <img 
+                      src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
+                      alt={member.name} 
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                    />
+                  </div>
                   {member.bloodGroup && (
-                    <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
+                    <div className="absolute top-2 right-2 z-20 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
                       {member.bloodGroup}
                     </div>
                   )}
                 </div>
-                <div className="px-1 pb-2 flex flex-col items-center text-center">
-                  <h3 className="font-display font-bold text-[13px] text-slate-900 mb-0.5 group-hover:text-brand-primary transition-colors line-clamp-1 leading-tight w-full">{member.name}</h3>
-                  <div className="text-slate-500 text-[10px] mb-2 line-clamp-1 font-medium w-full">
-                    {member.designation && <span className="block italic opacity-80 truncate">{member.designation}</span>}
-                    {member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}
+
+                {/* Content */}
+                <div className="p-3 pt-2 flex-1 flex flex-col items-center text-center">
+                  <h3 className="font-display font-bold text-xs text-slate-800 mb-1.5 group-hover:text-brand-primary transition-colors line-clamp-1 w-full">{member.name}</h3>
+                  
+                  <div className="w-full space-y-1.5">
+                    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-brand-accent/10 text-brand-accent rounded-full text-[8px] font-black uppercase tracking-widest border border-brand-accent/5">
+                      Session: {member.session || 'N/A'}
+                    </div>
+                    
+                    <div className="text-[9px] text-slate-500 font-bold group-hover:text-slate-700 transition-colors line-clamp-1 leading-tight">
+                      {member.companyName || 'EDEA Member'}
+                    </div>
                   </div>
-                  <div className="inline-flex items-center justify-center px-2 py-0.5 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter">Session: {member.session || 'N/A'}</div>
                 </div>
               </motion.div>
             ))}
@@ -2979,48 +3824,44 @@ export default function App() {
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05 }}
+                whileHover={{ y: -8, scale: 1.02 }}
                 viewport={{ once: true }}
-                className="group relative bg-white rounded-2xl border border-slate-100 overflow-hidden hover:shadow-xl hover:border-brand-primary/20 transition-all duration-300"
+                className="group relative bg-white rounded-[24px] border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-brand-primary/10 flex flex-col h-full"
               >
-                <div className="aspect-[4/5] relative overflow-hidden bg-slate-50">
-                  <div className="absolute top-2 left-2 z-10">
+                {/* Profile Image with Colorful Background Accent */}
+                <div className="relative aspect-[3/4] overflow-hidden bg-brand-primary/5 p-3">
+                  <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/20 via-transparent to-brand-accent/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="absolute top-4 left-4 z-20">
                     <span className="px-2 py-1 bg-brand-primary/90 text-white text-[8px] font-black uppercase tracking-widest rounded-md shadow-sm">
                       {member.role}
                     </span>
                   </div>
-                  {member.image ? (
-                    <img 
-                      src={member.image} 
-                      alt={member.name} 
-                      className="w-full h-full object-cover grayscale-[30%] group-hover:grayscale-0 transition-all duration-500 group-hover:scale-110"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-200">
-                      <Users size={32} />
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
-                    <div className="flex gap-2 w-full">
-                       <a href={`tel:${member.phone}`} className="flex-1 bg-white/20 backdrop-blur-md hover:bg-white/40 text-white p-2 rounded-lg flex items-center justify-center">
-                         <Phone size={14} />
-                       </a>
-                       <div className="flex-1 bg-white/20 backdrop-blur-md hover:bg-white/40 text-white p-2 rounded-lg flex items-center justify-center">
-                         <Mail size={14} />
-                       </div>
-                    </div>
+                  <div className="w-full h-full rounded-[16px] overflow-hidden border-2 border-white shadow-sm ring-4 ring-brand-primary/5 relative z-10">
+                    {member.image ? (
+                      <img 
+                        src={member.image} 
+                        alt={member.name} 
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-300">
+                         <Users size={32} />
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div className="p-4 text-center">
-                  <h3 className="font-bold text-slate-900 text-sm mb-0.5 line-clamp-1 group-hover:text-brand-primary transition-colors">{member.name}</h3>
-                  <div className="text-[9px] text-brand-primary font-black uppercase tracking-tight mb-2">
-                    {member.designation}
-                  </div>
-                  <div className="pt-2 border-t border-slate-50 opacity-60 group-hover:opacity-100 transition-opacity">
-                    <div className="text-[9px] text-slate-500 font-medium truncate mb-0.5">
-                      {member.institution}
+
+                {/* Content */}
+                <div className="p-3 pt-2 flex-1 flex flex-col items-center text-center">
+                  <h3 className="font-display font-bold text-xs text-slate-800 mb-1.5 group-hover:text-brand-primary transition-colors line-clamp-1 w-full">{member.name}</h3>
+                  
+                  <div className="w-full space-y-1.5">
+                    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-brand-accent/10 text-brand-accent rounded-full text-[8px] font-black uppercase tracking-widest border border-brand-accent/5">
+                      Session: {member.session || 'N/A'}
                     </div>
-                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-tighter">
-                      Session: {member.session}
+                    
+                    <div className="text-[9px] text-slate-500 font-bold group-hover:text-slate-700 transition-colors line-clamp-1 leading-tight">
+                      {member.institution || 'Leadership Team'}
                     </div>
                   </div>
                 </div>
@@ -3133,37 +3974,52 @@ export default function App() {
             </div>
 
             {/* All Members Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
               {executiveMembers.map((member, idx) => (
                 <motion.div
                   key={member.id}
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: idx * 0.05 }}
-                  className="bg-white rounded-2xl p-2 shadow-sm border-b-4 border-brand-primary/20 hover:border-brand-primary hover:shadow-xl transition-all group"
+                  whileHover={{ y: -8, scale: 1.02 }}
+                  className="relative bg-white rounded-[24px] border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-brand-primary/10 flex flex-col h-full group"
                 >
-                  <div className="aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-50 flex items-center justify-center">
-                    {member.image ? (
-                      <img 
-                        src={member.image} 
-                        alt={member.name} 
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
-                      />
-                    ) : (
-                      <Users size={32} className="text-slate-200" />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-brand-primary/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-4">
-                      <div className="text-white font-bold text-[10px] text-center leading-tight">
-                        {member.institution}
-                      </div>
+                  {/* Profile Image with Colorful Background Accent */}
+                  <div className="relative aspect-[3/4] overflow-hidden bg-brand-primary/5 p-3">
+                    <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/20 via-transparent to-brand-accent/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="absolute top-4 left-4 z-20">
+                      <span className="px-2 py-1 bg-brand-primary/90 text-white text-[8px] font-black uppercase tracking-widest rounded-md shadow-sm">
+                        {member.role}
+                      </span>
+                    </div>
+                    <div className="w-full h-full rounded-[16px] overflow-hidden border-2 border-white shadow-sm ring-4 ring-brand-primary/5 relative z-10">
+                      {member.image ? (
+                        <img 
+                          src={member.image} 
+                          alt={member.name} 
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-300">
+                           <Users size={32} />
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="px-2 pb-3 text-center">
-                    <div className="bg-brand-primary/10 text-brand-primary text-[8px] font-black uppercase px-2 py-0.5 rounded-full w-fit mx-auto mb-2">
-                      {member.role}
+
+                  {/* Content */}
+                  <div className="p-3 pt-2 flex-1 flex flex-col items-center text-center">
+                    <h3 className="font-display font-bold text-xs text-slate-800 mb-1.5 group-hover:text-brand-primary transition-colors line-clamp-1 w-full">{member.name}</h3>
+                    
+                    <div className="w-full space-y-1.5">
+                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-brand-accent/10 text-brand-accent rounded-full text-[8px] font-black uppercase tracking-widest border border-brand-accent/5">
+                        Session: {member.session || 'N/A'}
+                      </div>
+                      
+                      <div className="text-[9px] text-slate-500 font-bold group-hover:text-slate-700 transition-colors line-clamp-1 leading-tight">
+                        {member.institution || 'Leadership Team'}
+                      </div>
                     </div>
-                    <h4 className="text-[13px] font-display font-bold text-slate-900 mb-0.5 line-clamp-1">{member.name}</h4>
-                    <div className="inline-block px-3 py-0.5 bg-brand-primary/5 text-slate-400 rounded-full text-[8px] font-bold uppercase tracking-tight">Session: {member.session}</div>
                   </div>
                 </motion.div>
               ))}
@@ -3172,63 +4028,152 @@ export default function App() {
         )}
 
         {/* Full Programs Page View (Integrated) */}
-        {showAllProgramsView && (
+        {showAllProgramsView && !selectedProgram && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12 scroll-mt-20">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-6 mb-16">
-              <div className="space-y-4 text-center sm:text-left">
-                <div className="flex items-center gap-2 justify-center sm:justify-start">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-16">
+              <div className="space-y-4 text-center lg:text-left">
+                <div className="flex items-center gap-2 justify-center lg:justify-start">
                   <div className="h-[2px] w-8 bg-brand-primary" />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Association Timeline</span>
                 </div>
                 <h2 className="text-4xl sm:text-5xl font-display font-medium text-slate-900 leading-tight">All association programs</h2>
-                <p className="text-slate-500 text-lg max-w-2xl">A complete record of our workshops, seminars, and social initiatives across the Rangpur division.</p>
               </div>
-              <button 
-                onClick={() => { setShowAllProgramsView(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="bg-white p-4 rounded-[2rem] border border-slate-200 text-slate-900 hover:bg-slate-900 hover:text-white transition-all shadow-lg flex items-center gap-2 font-bold px-8 active:scale-95 whitespace-nowrap"
-              >
-                <ArrowRight className="rotate-180" size={24} /> Back to Home
-              </button>
+              
+              <div className="relative group max-w-md w-full mx-auto lg:mx-0">
+                <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-brand-primary transition-colors">
+                  <Search size={18} />
+                </div>
+                <input 
+                  type="text"
+                  placeholder="Search programs by name, location..."
+                  value={programHistorySearch}
+                  onChange={(e) => setProgramHistorySearch(e.target.value)}
+                  className="w-full pl-12 pr-6 py-4 bg-white border border-slate-100 rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary outline-none text-sm transition-all placeholder:text-slate-400 font-medium"
+                />
+                {programHistorySearch && (
+                  <button 
+                    onClick={() => setProgramHistorySearch('')}
+                    className="absolute inset-y-0 right-4 flex items-center text-slate-400 hover:text-brand-primary transition-colors"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-y-16 gap-x-8">
-              {programs.map((program, idx) => (
-                <motion.button
-                  key={`${program.id}-${idx}`}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.03 }}
-                  whileHover={{ y: -10 }}
-                  onClick={() => setSelectedProgram(program)}
-                  className="flex flex-col items-center gap-6 text-center group"
-                >
-                  <div className="relative w-32 h-32 sm:w-40 sm:h-40 xl:w-48 xl:h-48 rounded-full overflow-hidden border-8 border-white shadow-[0_10px_40px_rgba(0,0,0,0.05)] transition-all duration-500 group-hover:shadow-[0_20px_60px_rgba(0,0,0,0.15)] group-hover:border-brand-primary/10 flex items-center justify-center bg-slate-50">
-                    {program.image ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+              {filteredPrograms.map((program, idx) => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const isActive = program.registrationEnabled && (!program.registrationDeadline || new Date(program.registrationDeadline) >= today);
+
+                return (
+                  <motion.div
+                    key={`${program.id}-${idx}`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    whileHover={{ y: -8 }}
+                    className="flex flex-col bg-white rounded-[24px] border border-slate-100 shadow-[0_4px_30px_-10px_rgba(0,0,0,0.08)] overflow-hidden group transition-all duration-500 hover:shadow-2xl hover:shadow-brand-primary/10 h-full"
+                  >
+                    {/* Top Clear Image (4:3) */}
+                    <div 
+                      onClick={() => setSelectedProgram(program)}
+                      className="relative aspect-[4/3] overflow-hidden cursor-pointer"
+                    >
                       <img 
                         src={program.image} 
-                        alt={program.title} 
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000 ease-out" 
+                        alt={program.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[1500ms] ease-out" 
                       />
-                    ) : (
-                      <Calendar size={48} className="text-slate-200" />
-                    )}
-                    <div className="absolute inset-0 bg-brand-primary/0 group-hover:bg-brand-primary/20 transition-all duration-500 flex items-center justify-center backdrop-blur-[1px] opacity-0 group-hover:opacity-100">
-                      <div className="bg-white p-3 rounded-full text-brand-primary shadow-xl scale-0 group-hover:scale-100 transition-transform duration-500">
-                        <ExternalLink size={20} />
+                    </div>
+                    
+                    {/* Bottom Blurred Image with Content (4:3) */}
+                    <div className="relative aspect-[4/3] overflow-hidden">
+                      {/* Blurred Background */}
+                      <img 
+                        src={program.image} 
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-60" 
+                      />
+                      {/* Dark Gradient Overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-slate-900/40 to-slate-900/80" />
+                      
+                      {/* Content Overlay */}
+                      <div className="relative h-full p-6 flex flex-col items-start text-white">
+                        <h4 
+                          onClick={() => setSelectedProgram(program)}
+                          className="text-xl font-display font-bold mb-2 line-clamp-2 leading-tight group-hover:text-brand-accent transition-colors cursor-pointer drop-shadow-md"
+                        >
+                          {program.title}
+                        </h4>
+                        
+                        <div className="flex flex-col gap-1 mb-auto">
+                          <div className="flex items-center gap-1.5 text-white/80 font-medium">
+                            <MapPin size={12} className="text-brand-accent" />
+                            <span className="text-xs truncate">{program.location}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-white/60 font-medium ml-[2px]">
+                            <Calendar size={11} className="opacity-70" />
+                            <span className="text-[10px] tracking-wider uppercase">{program.date}</span>
+                          </div>
+                        </div>
+  
+                        <div className="w-full pt-4 mt-auto relative">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleShare(program);
+                            }}
+                            className="absolute -top-10 right-0 p-2.5 bg-white/10 backdrop-blur-md rounded-full border border-white/20 text-white hover:bg-white/20 transition-all active:scale-95 z-20"
+                            title="Share Program"
+                          >
+                            <Share2 size={16} />
+                          </button>
+
+                          {isActive ? (
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRegisteringProgram(program);
+                              }}
+                              className="w-full py-3 bg-brand-accent text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-brand-accent/30 flex items-center justify-center gap-2 active:scale-95 group/btn"
+                            >
+                              <UserPlus size={16} /> Register Now
+                            </button>
+                          ) : (
+                            <button 
+                              onClick={() => setSelectedProgram(program)}
+                              className="w-full py-3 bg-white/10 backdrop-blur-md text-white border border-white/20 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-white/20 transition-all flex items-center justify-center gap-2 active:scale-95"
+                            >
+                              View Details <ChevronRight size={16} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="space-y-2 px-2">
-                    <div className="text-[10px] font-bold text-brand-primary uppercase tracking-widest opacity-60">
-                      {program.date}
-                    </div>
-                    <h4 className="text-sm sm:text-base font-display font-medium text-slate-800 line-clamp-2 leading-snug group-hover:text-brand-primary transition-colors">
-                      {program.title}
-                    </h4>
-                  </div>
-                </motion.button>
-              ))}
+                  </motion.div>
+                );
+              })}
             </div>
+
+            {filteredPrograms.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-300 mb-6 border border-slate-100">
+                  <Search size={40} />
+                </div>
+                <h3 className="text-xl font-display font-bold text-slate-800 mb-2">No programs found</h3>
+                <p className="text-slate-500 max-w-sm">
+                  We couldn't find any programs matching "{programHistorySearch}". Try a different name or location.
+                </p>
+                <button 
+                  onClick={() => setProgramHistorySearch('')}
+                  className="mt-6 text-brand-primary font-bold hover:underline"
+                >
+                  Clear search
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -3249,17 +4194,27 @@ export default function App() {
                   {selectedProgram.title}
                 </h2>
               </div>
-              <div className="flex items-center gap-3 bg-brand-primary/5 px-5 py-2.5 rounded-2xl border border-brand-primary/10 shrink-0">
-                <Calendar size={18} className="text-brand-primary" />
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Scheduled On</span>
-                  <span className="text-sm font-bold text-slate-700">{selectedProgram.date}</span>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="bg-amber-100 text-amber-700 px-6 py-3 rounded-2xl flex items-center gap-3 border border-amber-200">
+                  <Calendar size={20} className="shrink-0" />
+                  <span className="text-base font-black tracking-tight">{selectedProgram.date}</span>
                 </div>
+
+                {selectedProgram.registrationEnabled && (!selectedProgram.registrationDeadline || new Date(selectedProgram.registrationDeadline) >= new Date()) && (
+                  <button 
+                    onClick={() => {
+                      setRegisteringProgram(selectedProgram);
+                    }}
+                    className="bg-brand-accent text-white px-8 py-3.5 rounded-2xl font-bold hover:opacity-90 transition-all shadow-xl shadow-brand-accent/20 flex items-center gap-2 active:scale-95 whitespace-nowrap"
+                  >
+                    <UserPlus size={18} /> Register Now
+                  </button>
+                )}
               </div>
             </div>
 
             {/* Full Width Featured Image */}
-            <div className="relative rounded-[2.5rem] md:rounded-[4rem] overflow-hidden shadow-2xl border-4 border-white mb-6 aspect-[21/9] sm:aspect-[21/8] bg-slate-100 group flex items-center justify-center">
+            <div className="relative rounded-[2.5rem] md:rounded-[4rem] overflow-hidden shadow-2xl border-4 border-white mb-8 aspect-video bg-slate-100 group flex items-center justify-center">
               {selectedProgram.image ? (
                 <img 
                   src={selectedProgram.image} 
@@ -3272,36 +4227,69 @@ export default function App() {
               <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 via-transparent to-transparent opacity-60" />
             </div>
 
-            {/* Meta Information Line (Venue, Category, Status) */}
-            <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-12 py-6 px-8 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm mb-12">
-              <div className="flex items-center gap-3">
-                <MapPin className="text-brand-primary" size={20} />
+            {/* Professional Meta Information Line */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm mb-12">
+              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors">
+                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
+                  <Calendar size={24} />
+                </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Venue</span>
-                  <span className="text-sm font-bold text-slate-700">{selectedProgram.location}</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Program Date</span>
+                  <span className="text-sm font-bold text-slate-800">{selectedProgram.date}</span>
                 </div>
               </div>
-              <div className="hidden sm:block w-px h-8 bg-slate-100" />
-              <div className="flex items-center gap-3">
-                <Tag className="text-brand-primary" size={20} />
+
+              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors">
+                <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center shrink-0">
+                  <MapPin size={24} />
+                </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Category</span>
-                  <span className="text-sm font-bold text-slate-700">{selectedProgram.category}</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Location</span>
+                  <span className="text-sm font-bold text-slate-800">{selectedProgram.location}</span>
                 </div>
               </div>
-              <div className="hidden sm:block w-px h-8 bg-slate-100" />
-              <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${selectedProgram.status === 'upcoming' ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`} />
+
+              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors">
+                <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
+                  <Tag size={24} />
+                </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Status</span>
-                  <span className="text-sm font-bold text-slate-700 uppercase tracking-widest">{selectedProgram.status}</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</span>
+                  <span className="text-sm font-bold text-slate-800">{selectedProgram.category}</span>
                 </div>
               </div>
+
+              {selectedProgram.driveLink ? (
+                <a 
+                  href={selectedProgram.driveLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-4 p-4 bg-emerald-50 text-emerald-700 rounded-3xl border border-emerald-100 hover:bg-emerald-100 transition-all group"
+                >
+                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <FolderOpen size={24} />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Memories</span>
+                    <span className="text-sm font-black italic">Full Album</span>
+                  </div>
+                </a>
+              ) : (
+                <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent opacity-50">
+                  <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center shrink-0">
+                    <ImageIcon size={24} />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Album</span>
+                    <span className="text-sm font-bold text-slate-500 italic">Not Linked</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Single Column Flow */}
             <div className="space-y-12">
-              {/* About & Highlights Section */}
+              {/* About Section */}
               <section className="bg-white p-8 md:p-12 rounded-[3.5rem] border border-slate-100 shadow-sm relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 blur-[100px] rounded-full -mr-32 -mt-32" />
                 
@@ -3311,17 +4299,11 @@ export default function App() {
                       <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
                         <Info size={20} />
                       </div>
-                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Program Story & History</h3>
+                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Program Intent & Overview</h3>
                     </div>
                     <p className="text-xl text-slate-700 leading-relaxed font-bold italic whitespace-pre-line border-l-4 border-brand-primary/20 pl-6">
                       "{selectedProgram.description}"
                     </p>
-                    {selectedProgram.details && (
-                      <div 
-                        className="details-content prose prose-slate max-w-none prose-sm text-slate-500 prose-headings:text-slate-800 prose-p:leading-loose border-t border-slate-50 pt-10"
-                        dangerouslySetInnerHTML={{ __html: selectedProgram.details }} 
-                      />
-                    )}
                   </div>
 
                   <div className="lg:w-1/3">
@@ -3342,86 +4324,254 @@ export default function App() {
                 </div>
               </section>
 
+              {/* Extended Details Section */}
+              {selectedProgram.details && (
+                <section className="bg-white p-8 md:p-12 rounded-[3.5rem] border border-slate-100 shadow-sm relative overflow-hidden">
+                  <div className="absolute bottom-0 left-0 w-64 h-64 bg-brand-primary/5 blur-[100px] rounded-full -ml-32 -mb-32" />
+                  <div className="flex items-center gap-3 mb-10 relative z-10">
+                    <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
+                      <AlignLeft size={20} />
+                    </div>
+                    <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Extended Program Details</h3>
+                  </div>
+                  <div 
+                    className="details-content prose prose-slate max-w-none text-slate-600 prose-headings:text-slate-800 prose-p:leading-relaxed prose-img:rounded-3xl relative z-10 border-t border-slate-50 pt-10"
+                    dangerouslySetInnerHTML={{ __html: selectedProgram.details }} 
+                  />
+                </section>
+              )}
+
+              {/* Program Gallery & Album (New) */}
+              {(selectedProgram.gallery && selectedProgram.gallery.length > 0) && (
+                <section className="space-y-8">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
+                        <ImageIcon size={20} />
+                      </div>
+                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic font-display">Program Memories & Impact</h3>
+                    </div>
+                    {selectedProgram.driveLink && (
+                      <a 
+                        href={selectedProgram.driveLink} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/20 group"
+                      >
+                        <FolderOpen size={16} className="group-hover:rotate-12 transition-transform" /> 
+                        View Full Photo Album
+                      </a>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 h-[400px] md:h-[500px]">
+                    {selectedProgram.gallery.slice(0, 5).map((img, idx) => (
+                      <motion.div 
+                        key={idx}
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        whileHover={{ scale: 1.02 }}
+                        className={`relative rounded-3xl overflow-hidden shadow-xl border-4 border-white ${idx === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1'}`}
+                      >
+                        <img src={img} alt={`Gallery ${idx}`} className="w-full h-full object-cover transition-transform duration-700 hover:scale-110" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity flex items-end p-6">
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Memory {idx + 1}</span>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  {selectedProgram.driveLink && !selectedProgram.gallery?.length && (
+                    <div className="bg-slate-50 p-12 rounded-[3rem] border border-slate-100 text-center space-y-6">
+                       <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm">
+                         <FolderOpen size={32} className="text-brand-primary opacity-20" />
+                       </div>
+                       <div className="max-w-md mx-auto space-y-2">
+                         <h4 className="text-xl font-bold text-slate-800 italic font-display">Archive Available</h4>
+                         <p className="text-sm text-slate-500 font-medium">All high-resolution photos for this program are archived in an external album.</p>
+                       </div>
+                       <a 
+                          href={selectedProgram.driveLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-8 py-3 bg-brand-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-primary-dark transition-all shadow-lg shadow-brand-primary/20"
+                       >
+                         Open Album <ExternalLink size={14} />
+                       </a>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {/* Detailed Financial Statement */}
-              {selectedProgram.budget && (
+              {selectedProgram.status === 'completed' && (
                 <section className="space-y-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-slate-900 text-white rounded-2xl flex items-center justify-center">
-                      <PieChart size={20} />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-slate-900 text-white rounded-2xl flex items-center justify-center">
+                        <PieChart size={20} />
+                      </div>
+                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic font-display">Financial Statement Breakdown</h3>
                     </div>
-                    <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic font-display">Financial Statement Breakdown</h3>
+                    {selectedProgram.accountingPublished && (
+                      <div className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100 flex items-center gap-2">
+                        <Globe size={14} className="animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Publicly Published & Audited</span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="bg-white rounded-[3rem] border border-slate-100 overflow-hidden shadow-sm">
-                    <div className="grid md:grid-cols-2">
-                      {/* Income Breakdown */}
-                      <div className="p-7 border-b md:border-b-0 md:border-r border-slate-100">
-                        <div className="flex items-center justify-between mb-4">
-                          <h4 className="text-xs font-black uppercase tracking-widest text-green-600 flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-green-500" /> Income Sources
-                          </h4>
-                          <span className="text-[10px] font-black text-slate-400">CREDIT</span>
-                        </div>
-                        <div className="space-y-2">
-                          {selectedProgram.budget.income.map((item, idx) => (
-                            <div key={idx} className="flex justify-between items-center py-2 px-4 rounded-xl bg-green-50/50 border border-green-100/30 group hover:bg-green-50 transition-colors">
-                              <span className="text-sm font-bold text-slate-600">{item.item || "Unspecified Source"}</span>
-                              <span className="text-sm font-black text-slate-900">৳{item.amount.toLocaleString()}</span>
+                  {!selectedProgram.accountingPublished ? (
+                    <div className="bg-white p-12 rounded-[3.5rem] border border-slate-100 shadow-sm flex flex-col items-center text-center space-y-6">
+                      <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center relative">
+                        <div className="absolute inset-0 border-4 border-slate-100 border-t-brand-primary rounded-full animate-spin" />
+                        <ShieldAlert size={40} className="text-slate-200" />
+                      </div>
+                      <div className="max-w-md space-y-2">
+                        <h4 className="text-xl font-bold text-slate-900 italic font-display">Financial Audit in Progress</h4>
+                        <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                          Our finance team is currently reconciling all income and expenses for this program. 
+                          The verified financial statement will be published here once the audit is complete.
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="px-3 py-1 bg-slate-50 text-slate-400 text-[10px] font-bold rounded-lg border border-slate-100 uppercase tracking-widest">Transparency Phase</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-[3rem] border border-slate-100 overflow-hidden shadow-sm">
+                      <div className="grid md:grid-cols-2">
+                        {/* Income Breakdown */}
+                        <div className="p-7 border-b md:border-b-0 md:border-r border-slate-100">
+                          <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-xs font-black uppercase tracking-widest text-green-600 flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full bg-green-500" /> Income Sources
+                            </h4>
+                            <span className="text-[10px] font-black text-slate-400">CREDIT</span>
+                          </div>
+                          <div className="space-y-2">
+                            {/* Use dynamic finance ledger if available, fallback to budget */}
+                            {(() => {
+                              const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgram.id);
+                              const incomeItems = programLedger.filter(e => e.type === 'income');
+                              
+                              if (incomeItems.length > 0) {
+                                return incomeItems.map((item, idx) => (
+                                  <div key={idx} className="flex justify-between items-center py-2.5 px-4 rounded-xl bg-green-50/50 border border-green-100/30">
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-bold text-slate-700">{item.description}</span>
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{item.category}</span>
+                                    </div>
+                                    <span className="text-sm font-black text-slate-900 font-display">৳{item.amount.toLocaleString()}</span>
+                                  </div>
+                                ));
+                              }
+
+                              return selectedProgram.budget?.income.map((item, idx) => (
+                                <div key={idx} className="flex justify-between items-center py-2 px-4 rounded-xl bg-green-50/50 border border-green-100/30 group hover:bg-green-50 transition-colors">
+                                  <span className="text-sm font-bold text-slate-600">{item.item || "Unspecified Source"}</span>
+                                  <span className="text-sm font-black text-slate-900">৳{item.amount.toLocaleString()}</span>
+                                </div>
+                              )) || <p className="text-xs text-slate-400 p-4">No income recorded.</p>;
+                            })()}
+                            <div className="pt-4 border-t border-slate-100 flex justify-between items-center px-2">
+                              <span className="text-xs font-black uppercase text-slate-400">Total Revenue</span>
+                              <span className="text-lg font-black text-green-600">
+                                ৳{(() => {
+                                  const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgram.id);
+                                  const dynamicIncome = programLedger.filter(e => e.type === 'income').reduce((a, b) => a + b.amount, 0);
+                                  if (dynamicIncome > 0) return dynamicIncome.toLocaleString();
+                                  return (selectedProgram.budget?.income.reduce((a, b) => a + b.amount, 0) || 0).toLocaleString();
+                                })()}
+                              </span>
                             </div>
-                          ))}
-                          <div className="pt-4 border-t border-slate-100 flex justify-between items-center px-2">
-                            <span className="text-xs font-black uppercase text-slate-400">Total Income</span>
-                            <span className="text-lg font-black text-green-600">৳{selectedProgram.budget.income.reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        {/* Expense Breakdown */}
+                        <div className="p-7">
+                          <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-xs font-black uppercase tracking-widest text-red-500 flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full bg-red-500" /> Expense Details
+                            </h4>
+                            <span className="text-[10px] font-black text-slate-400">DEBIT</span>
+                          </div>
+                          <div className="space-y-2">
+                            {(() => {
+                              const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgram.id);
+                              const expenseItems = programLedger.filter(e => e.type === 'expense');
+                              
+                              if (expenseItems.length > 0) {
+                                return expenseItems.map((item, idx) => (
+                                  <div key={idx} className="flex justify-between items-center py-2.5 px-4 rounded-xl bg-red-50/50 border border-red-100/30">
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-bold text-slate-700">{item.description}</span>
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{item.category}</span>
+                                    </div>
+                                    <span className="text-sm font-black text-slate-900 font-display">৳{item.amount.toLocaleString()}</span>
+                                  </div>
+                                ));
+                              }
+
+                              return selectedProgram.budget?.expense.map((item, idx) => (
+                                <div key={idx} className="flex justify-between items-center py-2 px-4 rounded-xl bg-red-50/50 border border-red-100/30 group hover:bg-red-50 transition-colors">
+                                  <span className="text-sm font-bold text-slate-600">{item.item || "Unspecified Expense"}</span>
+                                  <span className="text-sm font-black text-slate-900">৳{item.amount.toLocaleString()}</span>
+                                </div>
+                              )) || <p className="text-xs text-slate-400 p-4">No expenses recorded.</p>;
+                            })()}
+                            <div className="pt-4 border-t border-slate-100 flex justify-between items-center px-2">
+                              <span className="text-xs font-black uppercase text-slate-400">Total Cost</span>
+                              <span className="text-lg font-black text-red-500">
+                                ৳{(() => {
+                                  const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgram.id);
+                                  const dynamicExpense = programLedger.filter(e => e.type === 'expense').reduce((a, b) => a + b.amount, 0);
+                                  if (dynamicExpense > 0) return dynamicExpense.toLocaleString();
+                                  return (selectedProgram.budget?.expense.reduce((a, b) => a + b.amount, 0) || 0).toLocaleString();
+                                })()}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
 
-                      {/* Expense Breakdown */}
-                      <div className="p-7">
-                        <div className="flex items-center justify-between mb-4">
-                          <h4 className="text-xs font-black uppercase tracking-widest text-red-500 flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-red-500" /> Expense Details
-                          </h4>
-                          <span className="text-[10px] font-black text-slate-400">DEBIT</span>
-                        </div>
-                        <div className="space-y-2">
-                          {selectedProgram.budget.expense.map((item, idx) => (
-                            <div key={idx} className="flex justify-between items-center py-2 px-4 rounded-xl bg-red-50/50 border border-red-100/30 group hover:bg-red-50 transition-colors">
-                              <span className="text-sm font-bold text-slate-600">{item.item || "Unspecified Expense"}</span>
-                              <span className="text-sm font-black text-slate-900">৳{item.amount.toLocaleString()}</span>
-                            </div>
-                          ))}
-                          <div className="pt-4 border-t border-slate-100 flex justify-between items-center px-2">
-                            <span className="text-xs font-black uppercase text-slate-400">Total Expenses</span>
-                            <span className="text-lg font-black text-red-500">৳{selectedProgram.budget.expense.reduce((a, b) => a + b.amount, 0).toLocaleString()}</span>
+                      {/* Final Net Summary */}
+                      <div className="bg-slate-900 p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/10 blur-[100px] rounded-full" />
+                        <div className="flex items-center gap-5 relative z-10">
+                          <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10 shadow-inner">
+                            <PieChart className="text-brand-accent" size={24} />
+                          </div>
+                          <div>
+                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 mb-0.5">Financial Reconciliation</p>
+                            <h4 className="text-xl font-bold text-white font-display">Final Program Balance</h4>
                           </div>
                         </div>
+                        <div className="text-center md:text-right relative z-10">
+                          <span className={`text-4xl md:text-5xl font-black font-display italic tracking-tight ${
+                            (() => {
+                              const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgram.id);
+                              const income = programLedger.filter(e => e.type === 'income').reduce((a, b) => a + b.amount, 0);
+                              const expense = programLedger.filter(e => e.type === 'expense').reduce((a, b) => a + b.amount, 0);
+                              const balance = income - expense;
+                              if (programLedger.length > 0) return balance >= 0;
+                              return (selectedProgram.budget?.income.reduce((a, b) => a + b.amount, 0) - (selectedProgram.budget?.expense.reduce((a, b) => a + b.amount, 0) || 0)) >= 0;
+                            })() ? 'text-brand-accent' : 'text-red-400'
+                          }`}>
+                            ৳{(() => {
+                              const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgram.id);
+                              const income = programLedger.filter(e => e.type === 'income').reduce((a, b) => a + b.amount, 0);
+                              const expense = programLedger.filter(e => e.type === 'expense').reduce((a, b) => a + b.amount, 0);
+                              const balance = income - expense;
+                              if (programLedger.length > 0) return balance.toLocaleString();
+                              return (selectedProgram.budget?.income.reduce((a, b) => a + b.amount, 0) - (selectedProgram.budget?.expense.reduce((a, b) => a + b.amount, 0) || 0)).toLocaleString();
+                            })()}
+                          </span>
+                        </div>
                       </div>
                     </div>
-
-                    {/* Final Net Summary */}
-                    <div className="bg-slate-900 p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/10 blur-[100px] rounded-full" />
-                      <div className="flex items-center gap-5 relative z-10">
-                        <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10 shadow-inner">
-                          <PieChart className="text-brand-accent" size={24} />
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 mb-0.5">Financial Reconciliation</p>
-                          <h4 className="text-xl font-bold text-white font-display">Closing Event Balance</h4>
-                        </div>
-                      </div>
-                      <div className="text-center md:text-right relative z-10">
-                        <span className={`text-4xl md:text-5xl font-black font-display italic tracking-tight ${
-                          (selectedProgram.budget.income.reduce((a, b) => a + b.amount, 0) - selectedProgram.budget.expense.reduce((a, b) => a + b.amount, 0)) >= 0 
-                          ? 'text-brand-accent' 
-                          : 'text-red-400'
-                        }`}>
-                          ৳{(selectedProgram.budget.income.reduce((a, b) => a + b.amount, 0) - selectedProgram.budget.expense.reduce((a, b) => a + b.amount, 0)).toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </section>
               )}
 
@@ -3546,588 +4696,756 @@ export default function App() {
         </AnimatePresence>
 
         {showMemberDashboard && user && !isAdmin && (
-          <div className="max-w-4xl mx-auto px-4 py-12">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-              <div className="flex items-center gap-3">
-                <div className="bg-brand-primary p-3 rounded-2xl text-white">
-                  <Users size={24} />
-                </div>
-                <div>
-                  <h1 className="text-3xl font-display font-bold text-slate-900 italic">Member Dashboard</h1>
-                  <div className="flex items-center gap-2 mt-1">
-                    <p className="text-slate-500 text-sm">Welcome back, {userProfile?.name || user.displayName || 'Member'}</p>
-                    {userProfile?.memberCode && (
-                      <span className="px-2 py-0.5 bg-brand-primary/10 text-brand-primary text-[10px] font-black rounded-lg border border-brand-primary/20">
-                        {userProfile.memberCode}
-                      </span>
-                    )}
+          <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
+            {/* Sidebar Navigation */}
+            <div className="w-full md:w-72 bg-white border-r border-slate-200 flex flex-col z-20">
+              <div className="p-8 border-b border-slate-50">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="bg-brand-primary p-2.5 rounded-xl text-white shadow-lg shadow-brand-primary/20">
+                    <Users size={20} />
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-display font-bold text-slate-900 italic">Member Portal</h1>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Association Management</p>
                   </div>
                 </div>
-              </div>
-              <button 
-                onClick={() => setShowMemberDashboard(false)}
-                className="flex items-center gap-2 text-slate-500 hover:text-brand-primary font-bold text-sm transition-all"
-              >
-                <ArrowLeft size={16} />
-                Back to Website
-              </button>
-            </div>
 
-            <div className="grid md:grid-cols-[1fr_2fr] gap-8">
-              <div className="space-y-6">
-                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm text-center">
-                  <div className="relative w-32 h-32 mx-auto mb-4 group">
+                <nav className="space-y-1">
+                  {[
+                    { id: 'overview', label: 'Overview', icon: Activity },
+                    { id: 'programs', label: 'My Programs', icon: Calendar },
+                    { id: 'directory', label: 'Member Directory', icon: Search },
+                    { id: 'settings', label: 'Profile Settings', icon: Settings },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setMemberTab(tab.id as any)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+                        memberTab === tab.id 
+                          ? 'bg-brand-primary/10 text-brand-primary' 
+                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
+                    >
+                      <tab.icon size={18} strokeWidth={memberTab === tab.id ? 2.5 : 2} />
+                      {tab.label}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+
+              <div className="mt-auto p-6 space-y-4">
+                <button 
+                  onClick={() => setShowMemberDashboard(false)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10"
+                >
+                  <ArrowLeft size={16} /> Website
+                </button>
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2 text-center">Your Profile</p>
+                  <div className="flex items-center gap-3">
                     <img 
                       src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
                       alt="Profile" 
-                      className="w-full h-full rounded-full object-cover border-4 border-brand-primary/10"
+                      className="w-10 h-10 rounded-full object-cover ring-2 ring-white border border-slate-200 shadow-sm"
                     />
-                    <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                      <Upload size={24} className="text-white" />
-                      <input 
-                        type="file" 
-                        className="hidden" 
-                        accept="image/*"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            try {
-                              setIsUploading('profile');
-                              const url = await uploadImage(file);
-                              setUserProfile((prev: any) => ({ ...prev, profilePicture: url }));
-                            } catch (err: any) {
-                              alert(err.message);
-                            } finally {
-                              setIsUploading(null);
-                            }
-                          }
-                        }}
-                      />
-                    </label>
-                    {isUploading === 'profile' && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-white/60 rounded-full">
-                        <Loader2 className="animate-spin text-brand-primary" />
-                      </div>
-                    )}
-                  </div>
-                  <h3 className="font-bold text-slate-900">{userProfile?.name}</h3>
-                  <div className="flex flex-wrap justify-center gap-2 mt-1">
-                    {userProfile?.memberCode && (
-                      <p className="text-[10px] font-black text-brand-primary uppercase tracking-tighter bg-brand-primary/5 py-1 px-2 rounded-lg inline-block">
-                        ID: {userProfile.memberCode}
-                      </p>
-                    )}
-                    <p className={`text-[10px] font-black uppercase tracking-tighter py-1 px-2 rounded-lg inline-block ${executiveMembers.some(m => m.userId === user.uid) ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                      {executiveMembers.some(m => m.userId === user.uid) ? 'Executive Member' : 'Association Member'}
-                    </p>
-                  </div>
-                  <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">{userProfile?.role?.replace('_', ' ')}</p>
-                  {userProfile?.phone && (
-                    <div className="mt-2 flex items-center justify-center gap-1.5 text-[10px] text-slate-400 font-bold">
-                      <Phone size={10} /> {userProfile.phone}
+                    <div className="overflow-hidden">
+                      <p className="text-xs font-bold text-slate-900 truncate">{userProfile?.name}</p>
+                      <p className="text-[10px] text-slate-500 truncate">{userProfile?.memberCode || 'Pending ID'}</p>
                     </div>
-                  )}
-                </div>
-
-                <div className="bg-brand-primary/5 rounded-3xl p-6 border border-brand-primary/10">
-                  <div className="flex items-center gap-2 mb-4 text-brand-primary">
-                    <ShieldCheck size={18} />
-                    <span className="font-bold text-sm">Account Status</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500">Verified Member</span>
-                    <span className={userProfile?.isVerified ? "text-green-600 font-bold" : "text-amber-600 font-bold"}>
-                      {userProfile?.isVerified ? "Yes" : "Pending"}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm mt-3 pt-3 border-t border-brand-primary/5">
-                    <span className="text-slate-500">Member Level</span>
-                    <span className="text-brand-primary font-bold">
-                      {executiveMembers.some(m => m.userId === user.uid) 
-                        ? "Executive Committee Member" 
-                        : (userProfile?.membershipStatus === 'approved' ? "Association Member" : "Membership Pending")}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Membership Status Tracker */}
-                <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm">
-                  <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Activity size={18} className="text-brand-primary" />
-                    Membership Journey
-                  </h3>
-                  <div className="space-y-6">
-                    {[
-                      { label: 'Payment Submitted', status: ['pending_finance', 'pending_secretary', 'approved', 'declined_finance', 'declined_secretary'].includes(userProfile?.membershipStatus) },
-                      { 
-                        label: 'Finance Approval', 
-                        status: ['pending_secretary', 'approved', 'declined_secretary'].includes(userProfile?.membershipStatus) ? 'success' : 
-                                (userProfile?.membershipStatus === 'declined_finance' ? 'error' : 
-                                (userProfile?.membershipStatus === 'pending_finance' ? 'pending' : 'waiting')) 
-                      },
-                      { 
-                        label: 'Secretary Approval', 
-                        status: userProfile?.membershipStatus === 'approved' ? 'success' : 
-                                (userProfile?.membershipStatus === 'declined_secretary' ? 'error' : 
-                                (userProfile?.membershipStatus === 'pending_secretary' ? 'pending' : 'waiting')) 
-                      }
-                    ].map((step, idx) => (
-                      <div key={idx} className="flex gap-4 items-start relative">
-                        {idx !== 2 && <div className="absolute left-[9px] top-6 w-[2px] h-8 bg-slate-100" />}
-                        <div className={`w-5 h-5 rounded-full z-10 flex items-center justify-center ${
-                          step.status === true || step.status === 'success' ? 'bg-green-500 text-white' : 
-                          step.status === 'error' ? 'bg-red-500 text-white' :
-                          step.status === 'pending' ? 'bg-amber-500 text-white animate-pulse' : 'bg-slate-200'
-                        }`}>
-                          {step.status === true || step.status === 'success' ? <Check size={12} strokeWidth={4} /> : 
-                           step.status === 'error' ? <X size={12} strokeWidth={4} /> : null}
-                        </div>
-                        <div className="flex-grow">
-                          <p className={`text-xs font-bold leading-none ${step.status === 'waiting' ? 'text-slate-400' : 'text-slate-900'}`}>{step.label}</p>
-                          {step.status === 'pending' && <p className="text-[10px] text-amber-600 mt-1">Pending Review</p>}
-                          {step.status === 'error' && <p className="text-[10px] text-red-600 mt-1">Declined — Please contact office</p>}
-                        </div>
-                      </div>
-                    ))}
                   </div>
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-8">
-                {/* Membership Payment Section */}
-                {(!userProfile?.membershipStatus || userProfile.membershipStatus === 'unpaid' || userProfile.membershipStatus.startsWith('declined')) && (
-                  <div className="bg-brand-primary/5 rounded-3xl p-8 border-2 border-dashed border-brand-primary/20">
-                    <div className="flex items-start gap-4 mb-6">
-                      <div className="bg-brand-primary p-3 rounded-2xl text-white">
-                        <CreditCard size={24} />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-slate-900 italic">Become an Association Member</h2>
-                        <p className="text-slate-600 text-sm mt-1">{membershipSettings?.paymentInstructions || "Please follow the instructions below to complete your registration."}</p>
-                      </div>
-                    </div>
-
-                    <div className="grid sm:grid-cols-2 gap-4 mb-8">
-                      <div className="bg-white p-4 rounded-2xl border border-brand-primary/10">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">bKash Personal</p>
-                        <p className="font-mono font-bold text-slate-900">{membershipSettings?.bkashNumber || '017XXXXXXXX'}</p>
-                      </div>
-                      <div className="bg-white p-4 rounded-2xl border border-brand-primary/10">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Nagad Personal</p>
-                        <p className="font-mono font-bold text-slate-900">{membershipSettings?.nagadNumber || '017XXXXXXXX'}</p>
-                      </div>
-                      <div className="sm:col-span-2 bg-brand-primary text-white p-4 rounded-2xl flex justify-between items-center">
-                        <span className="font-bold text-sm">Required Fee</span>
-                        <span className="text-2xl font-display font-bold italic">{membershipSettings?.membershipAmount || 100} BDT</span>
-                      </div>
-                    </div>
-
-                    <form onSubmit={handleSubmitPayment} className="space-y-4">
-                      <div className="grid sm:grid-cols-[120px_1fr] gap-4">
-                        <select 
-                          value={membershipPaymentForm.method}
-                          onChange={(e) => setMembershipPaymentForm({ ...membershipPaymentForm, method: e.target.value })}
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20"
-                        >
-                          <option value="bkash">bKash</option>
-                          <option value="nagad">Nagad</option>
-                        </select>
-                        <input 
-                          type="text"
-                          value={membershipPaymentForm.transactionId}
-                          onChange={(e) => setMembershipPaymentForm({ ...membershipPaymentForm, transactionId: e.target.value })}
-                          placeholder="Enter Transaction ID"
-                          className="bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
-                          required
-                        />
-                      </div>
-                      <button 
-                        type="submit"
-                        disabled={submittingPayment}
-                        className="w-full bg-brand-primary text-white py-4 rounded-xl font-bold uppercase tracking-widest hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-primary/20"
-                      >
-                        {userProfile?.membershipStatus?.startsWith('declined') ? 'Resubmit Payment Information' : 'Become a Member — Pay Now'}
-                        {submittingPayment && <Loader2 className="animate-spin" />}
-                      </button>
-                    </form>
-                  </div>
-                )}
-
-                {/* Executive Fees Section */}
-                {executiveMembers.some(m => m.userId === user.uid) && (
-                  <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm space-y-6">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-brand-primary/10 p-2.5 rounded-xl text-brand-primary">
-                          <CreditCard size={20} />
-                        </div>
+            {/* Main Content Area */}
+            <div className="flex-1 max-h-screen overflow-y-auto bg-slate-50/50">
+              <div className="max-w-5xl mx-auto p-6 md:p-12">
+                {/* Dashboard Tabs Rendering */}
+                <AnimatePresence mode="wait">
+                  {memberTab === 'overview' && (
+                    <motion.div 
+                      key="overview"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="space-y-8"
+                    >
+                      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
                         <div>
-                          <h2 className="text-lg font-bold text-slate-900">Executive Fees</h2>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Committee Member Dues</p>
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="h-1 w-6 bg-brand-primary rounded-full" />
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary">Member Status</span>
+                          </div>
+                          <h2 className="text-3xl font-display font-medium text-slate-900 tracking-tight">Welcome back, <span className="italic font-bold text-brand-primary">{userProfile?.name?.split(' ')[0]}</span></h2>
+                          <p className="text-slate-500 text-sm mt-1">Here is a quick overview of your association account.</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="px-5 py-3 bg-white border border-slate-200 rounded-2xl shadow-sm text-center">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Verification</p>
+                            <div className="flex items-center justify-center gap-1.5">
+                              {userProfile?.isVerified ? (
+                                <><ShieldCheck size={14} className="text-green-500" /> <span className="text-xs font-bold text-green-600">Verified</span></>
+                              ) : (
+                                <><Clock size={14} className="text-amber-500" /> <span className="text-xs font-bold text-amber-600">Pending</span></>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </header>
+
+                      <div className="grid md:grid-cols-3 gap-6">
+                        <div className="md:col-span-1 space-y-6">
+                          {/* Profile Card */}
+                          <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm text-center">
+                            <div className="relative w-32 h-32 mx-auto mb-6 group">
+                              <img 
+                                src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                                alt="Profile" 
+                                className="w-full h-full rounded-full object-cover ring-8 ring-brand-primary/5 shadow-inner"
+                              />
+                              <label className="absolute inset-0 flex items-center justify-center bg-slate-900/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-[2px]">
+                                {isUploading === 'profile' ? (
+                                  <Loader2 size={32} className="text-white animate-spin" />
+                                ) : (
+                                  <div className="flex flex-col items-center">
+                                    <Camera size={24} className="text-white mb-1" />
+                                    <span className="text-[8px] font-black uppercase text-white tracking-widest">Update Photo</span>
+                                  </div>
+                                )}
+                                <input 
+                                  type="file" 
+                                  className="hidden" 
+                                  disabled={isUploading === 'profile'}
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file && user) {
+                                      try {
+                                        setIsUploading('profile');
+                                        const url = await uploadImage(file);
+                                        
+                                        // Update Firestore immediately
+                                        const userRef = doc(db, 'users', user.uid);
+                                        await updateDoc(userRef, {
+                                          profilePicture: url,
+                                          updatedAt: new Date().toISOString()
+                                        });
+
+                                        setUserProfile((prev: any) => ({ ...prev, profilePicture: url }));
+                                        setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Profile photo updated!' });
+                                        setTimeout(() => setSaveStatus(null), 3000);
+                                      } catch (err: any) {
+                                        console.error(err);
+                                        alert(err.message || "Failed to upload image");
+                                      } finally {
+                                        setIsUploading(null);
+                                      }
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
+                            <h3 className="font-bold text-xl text-slate-900">{userProfile?.name}</h3>
+                            <div className="flex flex-wrap justify-center gap-2 mt-2">
+                              <span className="px-3 py-1 bg-brand-primary/10 text-brand-primary text-[10px] font-black rounded-lg border border-brand-primary/20">
+                                {userProfile?.memberCode || 'ID Pending'}
+                              </span>
+                              <span className={`px-3 py-1 text-[10px] font-black uppercase rounded-lg ${executiveMembers.some(m => m.userId === user.uid) ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {executiveMembers.some(m => m.userId === user.uid) ? 'Executive Member' : 'General Member'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Level Status */}
+                          <div className="bg-slate-900 rounded-3xl p-6 text-white overflow-hidden relative">
+                             <div className="relative z-10">
+                               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-4">Membership Tier</p>
+                               <div className="flex items-center gap-4">
+                                 <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                                   <Star size={24} className="text-amber-400 fill-amber-400" />
+                                 </div>
+                                 <div>
+                                   <p className="font-bold italic text-lg leading-none">Association Elite</p>
+                                   <p className="text-[10px] text-white/50 mt-1 uppercase font-black tracking-widest">Active Partner</p>
+                                 </div>
+                               </div>
+                             </div>
+                             <Star className="absolute -right-4 -bottom-4 w-24 h-24 text-white/5 rotate-12" />
+                          </div>
+                        </div>
+
+                        <div className="md:col-span-2 space-y-6">
+                           {/* Status Tracker */}
+                           <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm relative overflow-hidden">
+                              <h3 className="font-bold text-slate-900 mb-8 flex items-center gap-3">
+                                <div className="w-8 h-8 bg-brand-primary/10 rounded-xl flex items-center justify-center text-brand-primary">
+                                  <Activity size={18} />
+                                </div>
+                                Account Journey
+                              </h3>
+                              <div className="grid grid-cols-3 gap-4 relative">
+                                <div className="absolute top-4 left-0 w-full h-1 bg-slate-100 rounded-full" />
+                                {[
+                                  { label: 'Registered', status: 'success' },
+                                  { 
+                                    label: 'Finance', 
+                                    status: ['pending_secretary', 'approved', 'declined_secretary'].includes(userProfile?.membershipStatus) ? 'success' : 
+                                            (userProfile?.membershipStatus === 'declined_finance' ? 'error' : 
+                                            (userProfile?.membershipStatus === 'pending_finance' ? 'pending' : 'waiting')) 
+                                  },
+                                  { 
+                                    label: 'Final Review', 
+                                    status: userProfile?.membershipStatus === 'approved' ? 'success' : 
+                                            (userProfile?.membershipStatus === 'declined_secretary' ? 'error' : 
+                                            (userProfile?.membershipStatus === 'pending_secretary' ? 'pending' : 'waiting')) 
+                                  }
+                                ].map((step, idx) => (
+                                  <div key={idx} className="flex flex-col items-center text-center z-10">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center border-4 border-white shadow-md transition-all ${
+                                      step.status === 'success' ? 'bg-green-500 text-white' : 
+                                      step.status === 'error' ? 'bg-red-500 text-white' :
+                                      step.status === 'pending' ? 'bg-brand-primary text-white animate-pulse' : 'bg-slate-200 text-slate-400'
+                                    }`}>
+                                      {step.status === 'success' ? <Check size={14} strokeWidth={4} /> : 
+                                       step.status === 'error' ? <X size={14} strokeWidth={4} /> : 
+                                       <span className="text-[10px] font-black">{idx + 1}</span>}
+                                    </div>
+                                    <p className={`text-[10px] font-black uppercase tracking-widest mt-3 ${step.status === 'waiting' ? 'text-slate-300' : 'text-slate-900'}`}>{step.label}</p>
+                                  </div>
+                                ))}
+                              </div>
+                           </div>
+
+                            {/* Program Countdown Timer */}
+                            {nextUserProgram && (
+                              <motion.div 
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="bg-brand-primary/5 border border-brand-primary/20 rounded-3xl p-8 relative overflow-hidden group hover:shadow-xl hover:shadow-brand-primary/10 transition-all mb-6"
+                              >
+                                <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8 text-center md:text-left">
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-center md:justify-start gap-2 mb-3">
+                                      <div className="px-2 py-1 bg-brand-primary text-white text-[8px] font-black uppercase tracking-widest rounded-md">Upcoming Event</div>
+                                      <span className={`text-[10px] font-bold ${nextUserProgram.registration.status === 'confirmed' ? 'text-green-600' : 'text-amber-600'}`}>
+                                        {nextUserProgram.registration.status === 'confirmed' ? 'Confirmed Participation' : 'Registration Pending'}
+                                      </span>
+                                    </div>
+                                    <h3 className="text-2xl font-display font-bold text-slate-900 mb-2 leading-tight">
+                                      {nextUserProgram.program.title}
+                                    </h3>
+                                    <div className="flex items-center justify-center md:justify-start gap-4 text-slate-500 font-bold text-xs">
+                                      <div className="flex items-center gap-1.5"><Calendar size={14} /> {new Date(nextUserProgram.program.date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                                      <div className="flex items-center gap-1.5"><MapPin size={14} /> {nextUserProgram.program.location || 'Rangpur'}</div>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="flex flex-col items-center justify-center min-w-[200px] bg-white rounded-[2rem] p-6 border border-brand-primary/10 shadow-sm">
+                                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Days Remaining</p>
+                                     <div className="flex items-baseline gap-1">
+                                       <span className="text-6xl font-black text-brand-primary tabular-nums tracking-tighter">
+                                         {String(nextUserProgram.daysRemaining).padStart(2, '0')}
+                                       </span>
+                                       <span className="text-sm font-black text-slate-400 uppercase tracking-widest">Days</span>
+                                     </div>
+                                  </div>
+                                </div>
+                                <Sparkles className="absolute -left-4 -bottom-4 w-32 h-32 text-brand-primary/5 rotate-12 group-hover:scale-110 transition-transform duration-700" />
+                              </motion.div>
+                            )}
+
+                             {/* Available Registrations Notification */}
+                             {availableProgramsToRegister.length > 0 && (
+                               <div className="space-y-4 mb-6">
+                                 {availableProgramsToRegister.map(program => (
+                                   <motion.div 
+                                     key={program.id}
+                                     initial={{ opacity: 0, x: -20 }}
+                                     animate={{ opacity: 1, x: 0 }}
+                                     className="bg-amber-50 border border-amber-200 rounded-3xl p-6 relative overflow-hidden group shadow-sm hover:shadow-md transition-all"
+                                   >
+                                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                       <div className="flex items-center gap-4">
+                                         <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 shrink-0">
+                                           <PlusCircle size={24} />
+                                         </div>
+                                         <div>
+                                           <div className="flex items-center gap-2 mb-1">
+                                             {program.registrationDeadline && (
+                                               <span className="text-[10px] font-bold text-amber-600">
+                                                 Deadline: {new Date(program.registrationDeadline).toLocaleDateString()}
+                                               </span>
+                                             )}
+                                           </div>
+                                           <h4 className="font-bold text-slate-900 group-hover:text-brand-primary transition-colors">{program.title}</h4>
+                                         </div>
+                                       </div>
+                                       <button 
+                                         onClick={() => setRegisteringProgram(program)}
+                                         className="px-6 py-3 bg-amber-500 text-white rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-amber-600 transition-all shadow-lg shadow-amber-200 flex items-center justify-center gap-2"
+                                       >
+                                         Register Now <ArrowRight size={14} />
+                                       </button>
+                                     </div>
+                                     <div className="absolute top-0 right-0 w-32 h-32 bg-amber-100/50 -rotate-45 translate-x-16 -translate-y-16 rounded-full" />
+                                   </motion.div>
+                                 ))}
+                               </div>
+                             )}
+
+                           {/* Membership Action Area */}
+                           {(!userProfile?.membershipStatus || userProfile.membershipStatus === 'unpaid' || userProfile.membershipStatus.startsWith('declined')) && (
+                             <div className="bg-brand-primary text-white rounded-3xl p-8 shadow-xl shadow-brand-primary/20 relative overflow-hidden group">
+                               <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                 <div>
+                                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/60 mb-2">Required Action</p>
+                                   <h3 className="text-2xl font-bold italic mb-1">Complete your membership</h3>
+                                   <p className="text-white/70 text-sm">Please submit your registration fee of {membershipSettings?.membershipAmount || 100} BDT.</p>
+                                 </div>
+                                 <button 
+                                   onClick={() => setMemberTab('settings')}
+                                   className="px-8 py-4 bg-white text-brand-primary rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/30"
+                                 >
+                                   Pay Fee Now
+                                 </button>
+                               </div>
+                               <CreditCard className="absolute -right-8 -bottom-8 w-48 h-48 opacity-10 rotate-12 group-hover:scale-110 transition-transform duration-500" />
+                             </div>
+                           )}
+
+                           {/* Executive Dashboard integration if relevant */}
+                           {executiveMembers.some(m => m.userId === user.uid) && (
+                             <div className="grid grid-cols-2 gap-4">
+                               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                 <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Fee Payments</p>
+                                 <div className="flex items-end justify-between">
+                                    <h4 className="text-2xl font-bold text-slate-900">
+                                      {paymentSubmissions.filter(s => s.userId === user.uid && s.status === 'approved').length}
+                                    </h4>
+                                    <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-lg border border-green-100">Paid Terms</span>
+                                 </div>
+                               </div>
+                               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                 <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Events Joined</p>
+                                 <div className="flex items-end justify-between">
+                                    <h4 className="text-2xl font-bold text-slate-900">
+                                      {registrations.filter(r => r.userId === user.uid).length}
+                                    </h4>
+                                    <span className="text-[10px] font-bold text-brand-primary bg-brand-primary/5 px-2 py-0.5 rounded-lg border border-brand-primary/10">Programs</span>
+                                 </div>
+                               </div>
+                             </div>
+                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400">
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        Priority Payment Rules Active
+                    </motion.div>
+                  )}
+
+                  {memberTab === 'programs' && (
+                    <motion.div 
+                      key="programs"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="space-y-6"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-3xl font-display font-medium text-slate-900 italic font-bold">My Registered Programs</h2>
+                          <p className="text-slate-500 text-sm mt-1">Track your event participation and payment status.</p>
+                        </div>
+                        <Calendar size={48} className="text-slate-100" />
                       </div>
-                    </div>
 
-                    <div className="space-y-4">
-                      {feeStructures.map(fee => {
-                        if (fee.type === 'one-time') {
-                          const submission = paymentSubmissions.find(s => 
-                            s.userId === user.uid && 
-                            s.feeId === fee.id &&
-                            s.status === 'approved'
-                          );
-                          const pendingSubmission = paymentSubmissions.find(s => 
-                            s.userId === user.uid && 
-                            s.feeId === fee.id &&
-                            s.status === 'pending'
-                          );
-                          const rejectedSubmission = paymentSubmissions.find(s => 
-                            s.userId === user.uid && 
-                            s.feeId === fee.id &&
-                            s.status === 'rejected'
-                          );
-
-                          return (
-                            <div key={fee.id} className="border border-slate-100 rounded-2xl overflow-hidden">
-                              <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-100">
-                                <div>
-                                  <h3 className="font-bold text-slate-900">{fee.name}</h3>
-                                  <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest mt-1">One-Time Payment</span>
-                                </div>
-                                <span className="text-brand-primary font-bold text-sm">{fee.amount} BDT</span>
-                              </div>
-                              <div className="p-4">
-                                <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
-                                  submission ? 'bg-green-50 border-green-100' :
-                                  pendingSubmission ? 'bg-amber-50 border-amber-100' :
-                                  rejectedSubmission ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'
-                                }`}>
-                                  <div className="text-left">
-                                    <div className="text-[10px] font-bold text-slate-500 leading-none mb-1">Status</div>
-                                    <div className={`text-xs font-bold ${
-                                      submission ? 'text-green-700' :
-                                      pendingSubmission ? 'text-amber-700' :
-                                      rejectedSubmission ? 'text-red-700' : 'text-slate-900'
-                                    }`}>
-                                      {submission ? 'Paid & Approved' :
-                                       pendingSubmission ? 'Pending Approval' :
-                                       rejectedSubmission ? 'Payment Rejected' : 'Due for Payment'}
+                      <div className="space-y-8">
+                        {availableProgramsToRegister.length > 0 && (
+                          <div className="space-y-4">
+                            <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                              <Star size={14} className="text-amber-500 fill-amber-500" />
+                              Available for Registration
+                            </h3>
+                            <div className="grid gap-4">
+                              {availableProgramsToRegister.map(program => (
+                                <div key={program.id} className="bg-gradient-to-br from-amber-50 to-white p-6 rounded-[2rem] border border-amber-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6 group hover:shadow-xl hover:shadow-amber-100 transition-all">
+                                  <div className="flex gap-6">
+                                    <div className="w-16 h-16 bg-white border border-amber-100 rounded-[1.25rem] flex flex-col items-center justify-center text-amber-600 shadow-inner">
+                                      <span className="text-[10px] font-black uppercase tracking-tighter opacity-60">NEW</span>
+                                      <Plus size={24} strokeWidth={3} />
                                     </div>
-                                  </div>
-
-                                  {(!submission && !pendingSubmission) && (
-                                    <button 
-                                      onClick={() => {
-                                        setSelectedFeeForPayment(fee);
-                                        setPaymentForm({
-                                          transactionDetails: '',
-                                          selectedTerms: [{ termIndex: 0, year: 0 }]
-                                        });
-                                        setShowPaymentModal(true);
-                                      }}
-                                      className="px-6 py-2.5 bg-brand-primary text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-primary/20 hover:scale-105 active:scale-95 transition-all"
-                                    >
-                                      Pay Now
-                                    </button>
-                                  )}
-
-                                  {submission && (
-                                    <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white">
-                                      <Check size={18} strokeWidth={4} />
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        const startYear = new Date(fee.createdAt?.toDate?.() || fee.createdAt || Date.now()).getFullYear();
-                        const currentYear = new Date().getFullYear();
-                        const feeYears = [];
-                        for (let y = startYear; y <= currentYear; y++) feeYears.push(y);
-
-                        return (
-                          <div key={fee.id} className="border border-slate-100 rounded-2xl overflow-hidden">
-                            <div className="bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-100">
-                              <h3 className="font-bold text-slate-900">{fee.name}</h3>
-                              <span className="text-brand-primary font-bold text-sm">{fee.amount} BDT / term</span>
-                            </div>
-                            <div className="p-4 space-y-2">
-                              {feeYears.map(year => (
-                                <div key={year} className="space-y-2">
-                                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">{year} Cycle</div>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    {fee.terms.map((term, termIdx) => {
-                                      const submission = paymentSubmissions.find(s => 
-                                        s.userId === user.uid && 
-                                        s.feeId === fee.id && 
-                                        s.year === year && 
-                                        s.termIndex === termIdx
-                                      );
-
-                                      const isPast = year < currentYear || (year === currentYear && new Date().getMonth() + 1 > term.lastDate.month);
-                                      const isOverdue = isPast && (!submission || submission.status !== 'approved');
-
-                                      // Priority Check: Are there any unpaid terms before this one?
-                                      const previousUnpaid = feeYears.some(y => 
-                                        fee.terms.some((t, tIdx) => {
-                                          if (y < year || (y === year && tIdx < termIdx)) {
-                                            const s = paymentSubmissions.find(sub => 
-                                              sub.userId === user.uid && 
-                                              sub.feeId === fee.id && 
-                                              sub.year === y && 
-                                              sub.termIndex === tIdx
-                                            );
-                                            return !s || s.status !== 'approved';
-                                          }
-                                          return false;
-                                        })
-                                      );
-
-                                      return (
-                                        <div 
-                                          key={termIdx} 
-                                          className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
-                                            submission?.status === 'approved' ? 'bg-green-50 border-green-100' :
-                                            submission?.status === 'pending' ? 'bg-amber-50 border-amber-100' :
-                                            isOverdue ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'
-                                          }`}
-                                        >
-                                          <div className="text-left">
-                                            <div className="text-[10px] font-bold text-slate-500 leading-none mb-1">{term.timeline}</div>
-                                            <div className={`text-xs font-bold ${
-                                              submission?.status === 'approved' ? 'text-green-700' :
-                                              submission?.status === 'pending' ? 'text-amber-700' :
-                                              isOverdue ? 'text-red-700' : 'text-slate-900'
-                                            }`}>
-                                              {submission?.status === 'approved' ? 'Paid & Approved' :
-                                               submission?.status === 'pending' ? 'Pending Approval' :
-                                               submission?.status === 'rejected' ? 'Payment Rejected' :
-                                               isOverdue ? 'Overdue - Pay Now' : 'Due for Payment'}
-                                            </div>
+                                    <div>
+                                      <h4 className="font-bold text-slate-900 text-lg leading-tight mb-2">{program.title}</h4>
+                                      <div className="flex flex-wrap items-center gap-4 text-slate-500 text-[11px] font-bold">
+                                        <div className="flex items-center gap-1.5"><Calendar size={14} /> {new Date(program.date).toLocaleDateString()}</div>
+                                        <div className="flex items-center gap-1.5"><MapPin size={14} /> {program.location || 'Rangpur'}</div>
+                                        {program.registrationDeadline && (
+                                          <div className="flex items-center gap-1.5 text-amber-600 font-black uppercase">
+                                            <Clock size={14} /> Deadline: {new Date(program.registrationDeadline).toLocaleDateString()}
                                           </div>
-                                          
-                                          {(!submission || submission.status === 'rejected') && (
-                                            <button 
-                                              disabled={previousUnpaid}
-                                              onClick={() => {
-                                                setSelectedFeeForPayment(fee);
-                                                setPaymentForm({
-                                                  transactionDetails: '',
-                                                  selectedTerms: [{ termIndex: termIdx, year }]
-                                                });
-                                                setShowPaymentModal(true);
-                                              }}
-                                              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                                                previousUnpaid 
-                                                  ? 'bg-slate-100 text-slate-300 cursor-not-allowed' 
-                                                  : 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20 hover:scale-105 active:scale-95'
-                                              }`}
-                                              title={previousUnpaid ? "Please pay earlier dues first" : "Submit payment"}
-                                            >
-                                              {previousUnpaid ? 'Locked' : 'Pay'}
-                                            </button>
-                                          )}
-                                          
-                                          {submission?.status === 'approved' && (
-                                            <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center text-white">
-                                              <Check size={14} strokeWidth={4} />
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
+                                  <button 
+                                    onClick={() => setRegisteringProgram(program)}
+                                    className="px-8 py-4 bg-amber-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-amber-600 transition-all shadow-lg shadow-amber-200 flex items-center justify-center gap-2"
+                                  >
+                                    Register Now <ArrowRight size={16} />
+                                  </button>
                                 </div>
                               ))}
                             </div>
                           </div>
-                        );
-                      })}
+                        )}
 
-                      {feeStructures.length === 0 && (
-                        <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-                          <PieChart size={32} className="mx-auto text-slate-300 mb-3 opacity-20" />
-                          <p className="text-xs text-slate-400 font-medium">No fee structures defined yet.</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
-                <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
-                  <Settings size={20} className="text-brand-primary" />
-                  Edit Profile Information
-                </h2>
-
-                <form onSubmit={handleUpdateProfile} className="space-y-6">
-                  <div className="grid sm:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Full Name</label>
-                      <input 
-                        type="text"
-                        value={userProfile?.name || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, name: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                        placeholder="Your full name"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Session</label>
-                      <input 
-                        type="text"
-                        value={userProfile?.session || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, session: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                        placeholder="e.g. 2020-21"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Shift</label>
-                      <select 
-                        value={userProfile?.shift || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, shift: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                      >
-                        <option value="">Select Shift</option>
-                        <option value="1st">1st Shift</option>
-                        <option value="2nd">2nd Shift</option>
-                        <option value="Days">Day</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Blood Group</label>
-                      <select 
-                        value={userProfile?.bloodGroup || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, bloodGroup: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                      >
-                        <option value="">Select Group</option>
-                        {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
-                          <option key={bg} value={bg}>{bg}</option>
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                            <CheckCircle2 size={14} className="text-slate-400" />
+                            My Registered Programs
+                          </h3>
+                          <div className="grid gap-4">
+                            {registrations.filter(r => r.userId === user.uid).map(reg => (
+                          <div key={reg.id} className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6 group hover:border-brand-primary/30 hover:shadow-xl hover:shadow-slate-200/50 transition-all">
+                            <div className="flex gap-6">
+                              <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-[1.25rem] flex flex-col items-center justify-center text-brand-primary group-hover:bg-brand-primary group-hover:text-white transition-all shadow-inner">
+                                <span className="text-[10px] font-black uppercase tracking-tighter opacity-60">Month</span>
+                                <span className="text-xl font-black leading-none">{new Date(reg.submittedAt).getDate()}</span>
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-slate-900 text-lg leading-tight mb-2">{reg.programTitle}</h4>
+                                <div className="flex flex-wrap items-center gap-4">
+                                  <div className="flex items-center gap-1.5 text-slate-400">
+                                    <Clock size={14} />
+                                    <span className="text-[11px] font-bold">{new Date(reg.submittedAt).toLocaleDateString()}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-slate-400">
+                                    <Wallet size={14} />
+                                    <span className="text-[11px] font-bold uppercase tracking-wide">{reg.paymentMethod}: {reg.transactionId}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-8 border-t md:border-t-0 md:border-l border-slate-100 pt-6 md:pt-0 md:pl-8">
+                              <div className="text-right">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Registration Fee</p>
+                                <p className="text-xl font-black text-slate-900 tracking-tight">৳{reg.amount}</p>
+                              </div>
+                              <div className="flex flex-col items-end gap-2">
+                                <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border shadow-sm ${
+                                  reg.status === 'confirmed' ? 'bg-green-50 text-green-600 border-green-100 shadow-green-100/50' :
+                                  reg.status === 'pending' ? 'bg-amber-50 text-amber-600 border-amber-100 shadow-amber-100/50' :
+                                  'bg-red-50 text-red-600 border-red-100'
+                                }`}>
+                                  {reg.status}
+                                </div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                  Payment: {reg.paymentStatus || 'recorded'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         ))}
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Phone Number (Optional)</label>
-                      <input 
-                        type="tel"
-                        value={userProfile?.phone || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, phone: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                        placeholder="e.g. +88017..."
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Company Name</label>
-                      <input 
-                        type="text"
-                        value={userProfile?.companyName || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, companyName: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                        placeholder="Current workplace or company"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Designation</label>
-                      <input 
-                        type="text"
-                        value={userProfile?.designation || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, designation: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                        placeholder="Current Designation"
-                      />
-                    </div>
-                    <div className="sm:col-span-2 space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Institution Name</label>
-                      <input 
-                        type="text"
-                        value={userProfile?.institution || ''}
-                        onChange={(e) => setUserProfile({ ...userProfile, institution: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
-                        placeholder="Rangpur Polytechnic Institute (RPI)"
-                      />
-                    </div>
-                  </div>
-
-                  <button 
-                    type="submit"
-                    disabled={savingProfile}
-                    className="w-full bg-brand-primary text-white py-4 rounded-xl font-bold uppercase tracking-widest hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {savingProfile ? <Loader2 className="animate-spin" /> : <Save size={18} />}
-                    Update Profile Information
-                  </button>
-                </form>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-        {showAdminDashboard && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12">
-            {/* Success Toast */}
-            <AnimatePresence>
-              {saveStatus && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 50, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[200]"
-                >
-                  <div className="bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-2xl border border-white/10 flex items-center gap-4 min-w-[320px]">
-                    <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center shrink-0">
-                      <Save size={20} className="text-white" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-0.5">System Update</p>
-                      <p className="font-bold text-sm">{saveStatus.message}</p>
+                        {registrations.filter(r => r.userId === user.uid).length === 0 && (
+                          <div className="py-24 bg-white rounded-3xl border border-dashed border-slate-200 text-center flex flex-col items-center">
+                            <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center text-slate-300 mb-4">
+                              <Calendar size={32} />
+                            </div>
+                            <p className="text-slate-400 text-sm italic">You haven't registered for any programs yet.</p>
+                            <button onClick={() => setShowMemberDashboard(false)} className="mt-6 font-bold text-brand-primary text-sm hover:underline">Browse Programs</button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </motion.div>
               )}
-            </AnimatePresence>
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="h-1 w-6 bg-brand-primary rounded-full" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary">Control Center</span>
-                </div>
-                <h1 className="text-4xl font-display font-medium text-slate-900 italic font-bold">
-                  {specializedRole === 'finance' ? 'Finance Dashboard' : 
-                   specializedRole === 'secretary' ? 'Secretary Dashboard' : 
-                   'Admin Dashboard'}
-                </h1>
-                <p className="text-slate-500 text-sm mt-1">
-                  {specializedRole === 'finance' 
-                    ? 'Track association income and expenditures.' 
-                    : specializedRole === 'secretary'
-                    ? 'Manage your specialized secretary profile.'
-                    : 'Manage association content and specialized accounts.'}
-                </p>
-              </div>
+                  {memberTab === 'directory' && (
+                    <motion.div 
+                      key="directory"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="space-y-6"
+                    >
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div>
+                          <h2 className="text-3xl font-display font-medium text-slate-900 italic font-bold">Member Directory</h2>
+                          <p className="text-slate-500 text-sm mt-1">Connect with your community members.</p>
+                        </div>
+                        <div className="relative">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                          <input 
+                            type="text" 
+                            placeholder="Search members..."
+                            value={directorySearch}
+                            onChange={(e) => setDirectorySearch(e.target.value)}
+                            className="bg-white border border-slate-200 rounded-2xl pl-12 pr-6 py-3 text-sm focus:ring-2 focus:ring-brand-primary/20 outline-none w-full md:w-64 transition-all"
+                          />
+                        </div>
+                      </div>
 
-              <div className="flex items-center gap-4">
-                <div className="bg-white px-6 py-3 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${specializedRole === 'finance' ? 'bg-brand-secondary text-white' : 'bg-slate-50 text-brand-primary'}`}>
-                    {specializedRole === 'finance' ? <PieChart size={20} /> : <ShieldCheck size={20} />}
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-900 leading-none capitalize">{specializedRole || 'Super Admin'} Access</div>
-                    <div className="text-[10px] text-slate-400 mt-1 uppercase font-black tracking-tighter">Identity Verified</div>
-                  </div>
-                </div>
+                      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {allUsers
+                          .filter(u => u.isVerified || u.membershipStatus === 'approved')
+                          .filter(u => 
+                            u.name.toLowerCase().includes(directorySearch.toLowerCase()) || 
+                            u.memberCode?.toLowerCase().includes(directorySearch.toLowerCase()) ||
+                            u.session?.toLowerCase().includes(directorySearch.toLowerCase())
+                          )
+                          .map(member => (
+                            <div key={member.id} className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex items-center gap-4 group">
+                              <img 
+                                src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
+                                alt={member.name} 
+                                className="w-14 h-14 rounded-2xl object-cover ring-4 ring-slate-50 group-hover:scale-105 transition-transform"
+                              />
+                              <div className="overflow-hidden">
+                                <h4 className="font-bold text-slate-900 leading-none truncate">{member.name}</h4>
+                                <p className="text-[10px] text-slate-400 mt-1 font-bold truncate">Session: {member.session || 'N/A'}</p>
+                                <div className="mt-2 flex gap-1">
+                                  {member.memberCode && (
+                                    <span className="px-1.5 py-0.5 bg-slate-50 border border-slate-100 rounded text-[8px] font-black text-slate-500 uppercase">{member.memberCode}</span>
+                                  )}
+                                  <span className={`px-1.5 py-0.5 border rounded text-[8px] font-black uppercase ${executiveMembers.some(m => m.userId === member.userId) ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
+                                    {executiveMembers.some(m => m.userId === member.userId) ? 'Executive' : 'Member'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {memberTab === 'settings' && (
+                    <motion.div 
+                      key="settings"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="space-y-8"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-3xl font-display font-medium text-slate-900 italic font-bold">Profile Settings</h2>
+                          <p className="text-slate-500 text-sm mt-1">Manage your details and payment information.</p>
+                        </div>
+                        <div className="bg-brand-primary/10 p-4 rounded-3xl text-brand-primary">
+                           <Settings size={32} />
+                        </div>
+                      </div>
+
+                      {/* Available Program Registrations for Member Profile */}
+                      {availableProgramsToRegister.length > 0 && (
+                        <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-3xl p-8 text-white shadow-xl shadow-amber-200 relative overflow-hidden group">
+                          <div className="relative z-10">
+                            <div className="flex items-center gap-2 mb-4">
+                              <span className="px-2 py-1 bg-white/20 backdrop-blur-md rounded text-[8px] font-black uppercase tracking-widest">New Opportunity</span>
+                            </div>
+                            <h3 className="text-2xl font-bold mb-6">Want to participate in our upcoming programs?</h3>
+                            <div className="grid sm:grid-cols-2 gap-4">
+                              {availableProgramsToRegister.map(program => (
+                                <div key={program.id} className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl flex items-center justify-between group/card hover:bg-white/20 transition-all">
+                                  <div>
+                                    <h4 className="font-bold text-sm leading-tight">{program.title}</h4>
+                                    <p className="text-[10px] text-white/60 mt-1 uppercase font-black tracking-widest">{new Date(program.date).toLocaleDateString()}</p>
+                                  </div>
+                                  <button 
+                                    onClick={() => setRegisteringProgram(program)}
+                                    className="w-8 h-8 bg-white text-amber-600 rounded-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-lg"
+                                  >
+                                    <ArrowRight size={16} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <PlusCircle className="absolute -right-8 -bottom-8 w-48 h-48 opacity-10 -rotate-12 group-hover:scale-110 transition-transform duration-700" />
+                        </div>
+                      )}
+
+                      {/* Payment resubmission if needed */}
+                      {(!userProfile?.membershipStatus || userProfile.membershipStatus === 'unpaid' || userProfile.membershipStatus.startsWith('declined')) && (
+                        <div className="bg-white rounded-3xl p-8 border-2 border-brand-primary/10 shadow-sm">
+                           <div className="flex items-center gap-3 mb-6">
+                            <Receipt size={24} className="text-brand-primary" />
+                            <h3 className="text-xl font-bold text-slate-900">Membership Fee Submission</h3>
+                           </div>
+                           <div className="grid md:grid-cols-2 gap-8">
+                             <div>
+                               <p className="text-sm text-slate-600 mb-6">{membershipSettings?.paymentInstructions || "Please submit the following amount to our accounts."}</p>
+                               <div className="space-y-3">
+                                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Amount Due</span>
+                                    <span className="text-lg font-black text-brand-primary">{membershipSettings?.membershipAmount || 100} BDT</span>
+                                  </div>
+                                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">bKash Personal</span>
+                                    <span className="font-mono font-bold text-slate-900">{membershipSettings?.bkashNumber || '017XXXXXXXX'}</span>
+                                  </div>
+                               </div>
+                             </div>
+                             <form onSubmit={handleSubmitPayment} className="bg-brand-primary/5 p-6 rounded-3xl border border-brand-primary/10 space-y-4">
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Select Method</label>
+                                  <select 
+                                    value={membershipPaymentForm.method}
+                                    onChange={(e) => setMembershipPaymentForm({ ...membershipPaymentForm, method: e.target.value })}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20"
+                                  >
+                                    <option value="bkash">bKash</option>
+                                    <option value="nagad">Nagad</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Transaction ID</label>
+                                  <input 
+                                    type="text"
+                                    value={membershipPaymentForm.transactionId}
+                                    onChange={(e) => setMembershipPaymentForm({ ...membershipPaymentForm, transactionId: e.target.value })}
+                                    placeholder="Enter TXID"
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-mono"
+                                    required
+                                  />
+                                </div>
+                                <button 
+                                  type="submit"
+                                  disabled={submittingPayment}
+                                  className="w-full bg-brand-primary text-white py-4 rounded-xl font-bold uppercase tracking-widest hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-primary/20"
+                                >
+                                  {submittingPayment ? <Loader2 className="animate-spin" /> : <Save size={18} />}
+                                  Submit Payment
+                                </button>
+                             </form>
+                           </div>
+                        </div>
+                      )}
+
+                      <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
+                        <form onSubmit={handleUpdateProfile} className="space-y-8">
+                          <div className="flex flex-col md:flex-row items-center gap-8 pb-8 border-b border-slate-50">
+                            <div className="relative group">
+                              <div className="w-32 h-32 rounded-3xl overflow-hidden ring-4 ring-slate-100 shadow-inner bg-slate-50">
+                                <img 
+                                  src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                                  alt="Profile" 
+                                  className="w-full h-full object-cover"
+                                />
+                                {isUploading === 'profile' && (
+                                  <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center backdrop-blur-[2px]">
+                                    <Loader2 size={32} className="text-white animate-spin" />
+                                  </div>
+                                )}
+                              </div>
+                              <label className="absolute -bottom-2 -right-2 w-10 h-10 bg-brand-primary text-white rounded-xl flex items-center justify-center cursor-pointer shadow-lg hover:scale-110 active:scale-95 transition-all">
+                                <Camera size={20} />
+                                <input 
+                                  type="file" 
+                                  className="hidden" 
+                                  disabled={isUploading === 'profile'}
+                                  accept="image/*"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file && user) {
+                                      try {
+                                        setIsUploading('profile');
+                                        const url = await uploadImage(file);
+                                        
+                                        // Update Firestore immediately
+                                        const userRef = doc(db, 'users', user.uid);
+                                        await updateDoc(userRef, {
+                                          profilePicture: url,
+                                          updatedAt: new Date().toISOString()
+                                        });
+
+                                        setUserProfile((prev: any) => ({ ...prev, profilePicture: url }));
+                                        setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Profile photo updated!' });
+                                        setTimeout(() => setSaveStatus(null), 3000);
+                                      } catch (err: any) {
+                                        console.error(err);
+                                        alert(err.message || "Failed to upload image");
+                                      } finally {
+                                        setIsUploading(null);
+                                      }
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
+                            <div className="flex-1 text-center md:text-left">
+                              <h4 className="font-bold text-slate-800 text-lg">Your Profile Photo</h4>
+                              <p className="text-sm text-slate-500 mt-1 max-w-sm">This photo will be visible to other members and association administrators.</p>
+                            </div>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-8">
+                             {[
+                               { label: 'Full Name', key: 'name', type: 'text', placeholder: 'Your Name' },
+                               { label: 'Session', key: 'session', type: 'text', placeholder: 'e.g. 2020-21' },
+                               { label: 'Phone', key: 'phone', type: 'tel', placeholder: '+8801...' },
+                               { label: 'Company', key: 'companyName', type: 'text', placeholder: 'Current Workplace' },
+                               { label: 'Designation', key: 'designation', type: 'text', placeholder: 'Current Role' },
+                               { label: 'Institution', key: 'institution', type: 'text', placeholder: 'e.g. RPI' }
+                             ].map((field) => (
+                               <div key={field.key} className="space-y-2">
+                                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest">{field.label}</label>
+                                 <input 
+                                   type={field.type}
+                                   value={userProfile?.[field.key] || ''}
+                                   onChange={(e) => setUserProfile({ ...userProfile, [field.key]: e.target.value })}
+                                   placeholder={field.placeholder}
+                                   className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-4 focus:ring-brand-primary/10 outline-none transition-all font-medium text-slate-900 border-b-2 focus:border-brand-primary"
+                                 />
+                               </div>
+                             ))}
+                             <div className="space-y-2">
+                               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Blood Group</label>
+                               <select 
+                                 value={userProfile?.bloodGroup || ''}
+                                 onChange={(e) => setUserProfile({ ...userProfile, bloodGroup: e.target.value })}
+                                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-4 focus:ring-brand-primary/10 outline-none transition-all"
+                               >
+                                 <option value="">Select Group</option>
+                                 {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+                                   <option key={bg} value={bg}>{bg}</option>
+                                 ))}
+                               </select>
+                             </div>
+                             <div className="space-y-2">
+                               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Shift</label>
+                               <select 
+                                 value={userProfile?.shift || ''}
+                                 onChange={(e) => setUserProfile({ ...userProfile, shift: e.target.value })}
+                                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-4 focus:ring-brand-primary/10 outline-none transition-all"
+                               >
+                                 <option value="">Select Shift</option>
+                                 <option value="1st">1st Shift</option>
+                                 <option value="2nd">2nd Shift</option>
+                                 <option value="Days">Day</option>
+                               </select>
+                             </div>
+                          </div>
+                          
+                          <button 
+                            type="submit"
+                            disabled={savingProfile}
+                            className="w-full md:w-auto px-12 py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all flex items-center justify-center gap-3 shadow-xl"
+                          >
+                            {savingProfile ? <Loader2 className="animate-spin" /> : <Save size={20} />}
+                            Save All Changes
+                          </button>
+                        </form>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
+          </div>
+        )}
+
+        {showAdminDashboard && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-4 pb-12">
 
             <div className="grid lg:grid-cols-4 gap-8">
               {/* Sidebar Tabs */}
@@ -4168,6 +5486,13 @@ export default function App() {
                 {specializedRole === 'finance' && (
                   <>
                     <button 
+                      onClick={() => setAdminTab('program_mgmt')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'program_mgmt' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Briefcase size={18} />
+                      <span className="font-bold text-sm">Program Management</span>
+                    </button>
+                    <button 
                       onClick={() => setAdminTab('finance')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'finance' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
                     >
@@ -4181,8 +5506,17 @@ export default function App() {
                       <CreditCard size={18} />
                       <span className="font-bold text-sm">Member Ledger</span>
                     </button>
+                    <button 
+                      onClick={() => setAdminTab('sponsorship')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'sponsorship' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <Building2 size={18} />
+                      <span className="font-bold text-sm">Sponsorship</span>
+                    </button>
                   </>
                 )}
+
+
 
                 {specializedRole === 'secretary' && (
                   <button 
@@ -4194,7 +5528,7 @@ export default function App() {
                   </button>
                 )}
 
-                {(specializedRole === 'finance' || specializedRole === 'secretary') && (
+                {(specializedRole === 'finance' || specializedRole === 'secretary' || isAdmin) && (
                   <button 
                     onClick={() => setAdminTab('approvals')}
                     className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${adminTab === 'approvals' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
@@ -4206,11 +5540,14 @@ export default function App() {
                     {(() => {
                       const queueCount = 
                         specializedRole === 'finance' ? (
-                          allUsers.filter(u => u.membershipStatus === 'pending_finance').length + 
-                          paymentSubmissions.filter(p => p.status === 'pending').length
+                          allUsers.filter(u => u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance').length + 
+                          paymentSubmissions.filter(p => p.status === 'pending').length +
+                          registrations.filter(r => r.status === 'pending').length
                         ) :
-                        specializedRole === 'secretary' ? allUsers.filter(u => u.membershipStatus === 'pending_secretary').length : 
-                        0;
+                        specializedRole === 'secretary' ? (
+                          allUsers.filter(u => u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary').length +
+                          registrations.filter(r => r.status === 'pending').length
+                        ) : 0;
                       
                       return queueCount > 0 && (
                         <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full border border-white/20 shadow-sm animate-pulse">
@@ -4222,33 +5559,32 @@ export default function App() {
                 )}
 
                 {specializedRole === 'secretary' && (
-                  <button 
-                    onClick={() => setAdminTab('create_program')}
-                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'create_program' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                  >
-                    <PlusCircle size={18} />
-                    <span className="font-bold text-sm">Create Program</span>
-                  </button>
-                )}
-
-                {specializedRole === 'finance' && (
-                  <button 
-                    onClick={() => setAdminTab('fees')}
-                    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'fees' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                  >
-                    <CreditCard size={18} />
-                    <span className="font-bold text-sm">Fee Management</span>
-                  </button>
-                )}
-
-                {isAdmin && (
                   <>
+                    <button 
+                      onClick={() => setAdminTab('create_program')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'create_program' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <PlusCircle size={18} />
+                      <span className="font-bold text-sm">Create Program</span>
+                    </button>
                     <button 
                       onClick={() => setAdminTab('notices')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'notices' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
                     >
                       <FileText size={18} />
                       <span className="font-bold text-sm">Notice Management</span>
+                    </button>
+                  </>
+                )}
+
+                {specializedRole === 'finance' && (
+                  <>
+                    <button 
+                      onClick={() => setAdminTab('fees')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'fees' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <CreditCard size={18} />
+                      <span className="font-bold text-sm">Fee Management</span>
                     </button>
                     <button 
                       onClick={() => setAdminTab('membership-config')}
@@ -4257,6 +5593,11 @@ export default function App() {
                       <CreditCard size={18} />
                       <span className="font-bold text-sm">Membership Setup</span>
                     </button>
+                  </>
+                )}
+
+                {isAdmin && (
+                  <>
                     <button 
                       onClick={() => setAdminTab('branding')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'branding' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
@@ -5688,30 +7029,989 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                ) : adminTab === 'sponsorship' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    {isAddingSponsorship ? (
+                      <div className="p-8">
+                        <div className="flex items-center gap-4 mb-8">
+                          <button 
+                            onClick={() => { setIsAddingSponsorship(false); setEditingSponsorship(null); }}
+                            className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 transition-all"
+                          >
+                            <ArrowLeft size={20} />
+                          </button>
+                          <div>
+                            <h3 className="font-display font-bold text-xl text-slate-900">{editingSponsorship ? 'Edit Sponsorship' : 'Add New Sponsorship'}</h3>
+                            <p className="text-xs text-slate-500">Enter details for the sponsorship company</p>
+                          </div>
+                        </div>
+
+                        <form onSubmit={handleSponsorshipSubmit} className="space-y-6">
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Company Name *</label>
+                              <input 
+                                required
+                                type="text"
+                                value={sponsorshipForm.name}
+                                onChange={(e) => setSponsorshipForm({...sponsorshipForm, name: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold"
+                                placeholder="e.g., Biotech Bangladesh Ltd."
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Company Email *</label>
+                              <input 
+                                required
+                                type="email"
+                                value={sponsorshipForm.email}
+                                onChange={(e) => setSponsorshipForm({...sponsorshipForm, email: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                                placeholder="contact@company.com"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact Person</label>
+                              <input 
+                                type="text"
+                                value={sponsorshipForm.contactPerson}
+                                onChange={(e) => setSponsorshipForm({...sponsorshipForm, contactPerson: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                                placeholder="Name of representative"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact Number *</label>
+                              <input 
+                                required
+                                type="text"
+                                value={sponsorshipForm.number}
+                                onChange={(e) => setSponsorshipForm({...sponsorshipForm, number: e.target.value})}
+                                className="w-full px-5 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                                placeholder="+8801..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Company Address</label>
+                            <textarea 
+                              value={sponsorshipForm.address}
+                              onChange={(e) => setSponsorshipForm({...sponsorshipForm, address: e.target.value})}
+                              className="w-full h-24 p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                              placeholder="Full office address..."
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Company Icon / Logo</label>
+                            <div className="flex items-center gap-6 p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                              <div className="w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-sm shrink-0 bg-white">
+                                {sponsorshipForm.icon ? (
+                                  <img src={sponsorshipForm.icon} alt="Sponsorship Preview" className="w-full h-full object-contain p-2" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <Building2 className="text-slate-200" size={32} />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex-grow space-y-2">
+                                <input 
+                                  type="file"
+                                  id="sponsorship-icon-upload"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      try {
+                                        setIsUploading('sponsorship');
+                                        const url = await uploadImage(file);
+                                        setSponsorshipForm({...sponsorshipForm, icon: url});
+                                      } catch (err) {
+                                        alert(err instanceof Error ? err.message : 'Upload failed');
+                                      } finally {
+                                        setIsUploading(null);
+                                      }
+                                    }
+                                  }}
+                                />
+                                <label 
+                                  htmlFor="sponsorship-icon-upload"
+                                  className="flex items-center justify-center gap-3 px-6 py-3 bg-white border border-slate-100 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-900 hover:text-white transition-all cursor-pointer shadow-sm group"
+                                >
+                                  {isUploading === 'sponsorship' ? (
+                                    <Loader2 size={16} className="animate-spin text-brand-primary" />
+                                  ) : (
+                                    <Upload size={16} className="group-hover:scale-110 transition-transform" />
+                                  )}
+                                  {isUploading === 'sponsorship' ? 'Uploading...' : 'Upload Company Logo'}
+                                </label>
+                                <p className="text-[10px] text-slate-400 font-medium">Recommended: Square logo with transparent background.</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-6 border-t border-slate-50 flex justify-end gap-4">
+                            <button 
+                              type="button"
+                              onClick={() => { setIsAddingSponsorship(false); setEditingSponsorship(null); }}
+                              className="px-8 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all"
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              type="submit"
+                              disabled={savingProfile}
+                              className="flex items-center gap-3 bg-brand-primary text-white px-12 py-3 rounded-xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                            >
+                              {savingProfile ? <Loader2 className="animate-spin" /> : <Save size={16} />}
+                              {editingSponsorship ? 'Update Sponsorship' : 'Save Sponsorship'}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    ) : (
+                      <div className="p-8 space-y-6">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="font-display font-medium text-2xl text-slate-900 italic font-bold">Sponsorship Management</h3>
+                            <p className="text-xs text-slate-500">Track and manage your sponsoring partners</p>
+                          </div>
+                          <button 
+                            onClick={() => {
+                              setIsAddingSponsorship(true);
+                              setSponsorshipForm({ name: '', address: '', email: '', contactPerson: '', number: '', icon: '' });
+                            }}
+                            className="bg-brand-primary text-white px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest flex items-center gap-2 hover:shadow-lg transition-all"
+                          >
+                            <Plus size={16} />
+                            Add Sponsorship
+                          </button>
+                        </div>
+
+                        {sponsorships.length === 0 ? (
+                          <div className="bg-white border-2 border-dashed border-slate-100 rounded-[2rem] p-20 text-center">
+                            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                              <Building2 size={40} />
+                            </div>
+                            <h4 className="text-xl font-bold text-slate-900 mb-2">No sponsorships recorded</h4>
+                            <p className="text-slate-500 mb-8 max-w-sm mx-auto">Start by adding your association partners and sponsorship companies.</p>
+                            <button 
+                              onClick={() => setIsAddingSponsorship(true)}
+                              className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-bold uppercase tracking-widest"
+                            >
+                              Add First Sponsorship
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            {sponsorships.map((s) => (
+                              <div key={s.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all group relative">
+                                <div className="flex items-start gap-5">
+                                  <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center shrink-0 border border-slate-100">
+                                    {s.icon ? (
+                                      <img src={s.icon} alt={s.name} className="w-full h-full object-contain p-2" />
+                                    ) : (
+                                      <Building2 size={24} className="text-slate-300" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="font-bold text-slate-900 truncate">{s.name}</h4>
+                                    <div className="mt-2 space-y-1.5">
+                                      <div className="flex items-center gap-2 text-slate-500 text-xs">
+                                        <Mail size={12} />
+                                        <span className="truncate">{s.email}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2 text-slate-500 text-xs">
+                                        <Phone size={12} />
+                                        <span>{s.number}</span>
+                                      </div>
+                                      {s.contactPerson && (
+                                        <div className="flex items-center gap-2 text-brand-primary text-[10px] font-bold uppercase">
+                                          <UserIcon size={12} />
+                                          <span>{s.contactPerson}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingSponsorship(s);
+                                      setSponsorshipForm({
+                                        name: s.name,
+                                        address: s.address,
+                                        email: s.email,
+                                        contactPerson: s.contactPerson,
+                                        number: s.number,
+                                        icon: s.icon
+                                      });
+                                      setIsAddingSponsorship(true);
+                                    }}
+                                    className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-lg transition-all"
+                                  >
+                                    <Settings size={14} />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteSponsorship(s.id)}
+                                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : adminTab === 'program_mgmt' ? (
+                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div>
+                        <h3 className="font-display font-bold text-2xl text-slate-900">Program Management</h3>
+                        <p className="text-slate-500 text-sm mt-1">Manage budget, income & expenditure for association programs</p>
+                      </div>
+                      <div className="shrink-0">
+                        <select 
+                          value={selectedProgramForFinance}
+                          onChange={(e) => setSelectedProgramForFinance(e.target.value)}
+                          className="w-full lg:w-64 px-5 py-3.5 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold text-slate-700 shadow-sm appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M2%204l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_1.25rem_center] bg-no-repeat pr-12"
+                        >
+                          <option value="all">All Programs Combined</option>
+                          <optgroup label="Running Programs">
+                            {programs.filter(p => !p.status || p.status !== 'completed').map(p => (
+                              <option key={p.id} value={p.id}>{p.title}</option>
+                            ))}
+                          </optgroup>
+                          {programs.some(p => p.status === 'completed') && (
+                            <optgroup label="Completed Programs">
+                              {programs.filter(p => p.status === 'completed').map(p => (
+                                <option key={p.id} value={p.id}>{p.title} (Closed)</option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Program Stats */}
+                    {(() => {
+                      const programLedger = consolidatedFinanceLedger.filter(e => 
+                        selectedProgramForFinance === 'all' ? e.programId : e.programId === selectedProgramForFinance
+                      );
+                      const income = programLedger.filter(e => e.type === 'income').reduce((sum, e) => sum + e.amount, 0);
+                      const expense = programLedger.filter(e => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0);
+                      const balance = income - expense;
+
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                            <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                              <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/5 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-green-500/10 transition-colors" />
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="w-8 h-8 rounded-xl bg-green-50 flex items-center justify-center">
+                                  <ArrowRight size={14} className="text-green-600 -rotate-45" />
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Revenue</span>
+                              </div>
+                              <div className="text-3xl font-black text-green-600 font-display italic">৳{income.toLocaleString()}</div>
+                            </div>
+                            <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                              <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/5 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-red-500/10 transition-colors" />
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="w-8 h-8 rounded-xl bg-red-50 flex items-center justify-center">
+                                  <ArrowRight size={14} className="text-red-600 rotate-45" />
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Expenses</span>
+                              </div>
+                              <div className="text-3xl font-black text-red-600 font-display italic">৳{expense.toLocaleString()}</div>
+                            </div>
+                            <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                              <div className="absolute top-0 right-0 w-20 h-20 bg-brand-primary/5 rounded-full -mr-10 -mt-10 blur-xl group-hover:bg-brand-primary/10 transition-colors" />
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="w-8 h-8 rounded-xl bg-brand-primary/5 flex items-center justify-center">
+                                  <Wallet size={14} className="text-brand-primary" />
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Net Balance</span>
+                              </div>
+                              <div className={`text-3xl font-black font-display italic ${balance >= 0 ? 'text-slate-900' : 'text-red-500'}`}>
+                                ৳{Math.abs(balance).toLocaleString()}
+                                {balance < 0 && <span className="text-sm ml-1">(Deficit)</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Quick Actions & Ledger */}
+                          <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
+                            <div className="p-8 border-b border-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                              <div>
+                                <h4 className="font-display font-bold text-lg text-slate-900">Program Ledger</h4>
+                                {selectedProgramForFinance !== 'all' && (
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <p className="text-xs text-brand-primary font-bold">
+                                      {programs.find(p => p.id === selectedProgramForFinance)?.title}
+                                    </p>
+                                    {programs.find(p => p.id === selectedProgramForFinance)?.status === 'completed' && (
+                                      <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase tracking-widest rounded-md border border-emerald-100 flex items-center gap-1">
+                                        <CheckCircle2 size={8} /> Completed & Locked
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-3">
+                                {selectedProgramForFinance !== 'all' && programs.find(p => p.id === selectedProgramForFinance)?.status !== 'completed' && (
+                                  <button 
+                                    onClick={() => setShowCompleteProgramModal(true)}
+                                    className="flex-1 sm:flex-none flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20 active:scale-95"
+                                  >
+                                    <CheckCircle2 size={14} /> Complete Program
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => setShowPublishAccountingModal(true)}
+                                  className="flex-1 sm:flex-none flex items-center gap-2 bg-brand-primary text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20 active:scale-95"
+                                >
+                                  <Globe size={14} /> Accounting Publish
+                                </button>
+                                <button 
+                                  disabled={selectedProgramForFinance !== 'all' && programs.find(p => p.id === selectedProgramForFinance)?.status === 'completed'}
+                                  onClick={() => {
+                                    setFinanceForm({...financeForm, type: 'income', category: 'Sponsorship', programId: selectedProgramForFinance === 'all' ? '' : selectedProgramForFinance});
+                                    setShowFinanceForm(true);
+                                  }}
+                                  className={`flex-1 sm:flex-none flex items-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed`}
+                                >
+                                  <Plus size={14} /> Add Income
+                                </button>
+                                <button 
+                                  disabled={selectedProgramForFinance !== 'all' && programs.find(p => p.id === selectedProgramForFinance)?.status === 'completed'}
+                                  onClick={() => {
+                                    setFinanceForm({...financeForm, type: 'expense', category: 'Program Cost', programId: selectedProgramForFinance === 'all' ? '' : selectedProgramForFinance});
+                                    setShowFinanceForm(true);
+                                  }}
+                                  className={`flex-1 sm:flex-none flex items-center gap-2 bg-red-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-600 transition-all shadow-lg shadow-red-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed`}
+                                >
+                                  <Plus size={14} /> Add Expense
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="p-8 space-y-8">
+                              {showFinanceForm && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -20 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="bg-slate-50 p-8 rounded-3xl border border-slate-100 space-y-8"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recording {financeForm.type} Entry</h5>
+                                    <button onClick={() => setShowFinanceForm(false)} className="text-slate-400 hover:text-red-500"><X size={18} /></button>
+                                  </div>
+
+                                  <div className="grid md:grid-cols-4 gap-6">
+                                    <div className="space-y-3">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Program</label>
+                                      <select 
+                                        value={financeForm.programId}
+                                        onChange={(e) => setFinanceForm({...financeForm, programId: e.target.value})}
+                                        className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold focus:ring-2 focus:ring-brand-primary/10 transition-all shadow-sm"
+                                      >
+                                        <option value="">Select Program</option>
+                                        {programs.filter(p => !p.status || p.status !== 'completed').map(p => (
+                                          <option key={p.id} value={p.id}>{p.title}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="space-y-3">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Amount (৳)</label>
+                                      <input 
+                                        type="number"
+                                        value={financeForm.amount || ''}
+                                        onChange={(e) => setFinanceForm({...financeForm, amount: parseFloat(e.target.value) || 0})}
+                                        className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                        placeholder="0.00"
+                                      />
+                                    </div>
+                                    <div className="space-y-3">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Date</label>
+                                      <input 
+                                        type="date"
+                                        value={financeForm.date}
+                                        onChange={(e) => setFinanceForm({...financeForm, date: e.target.value})}
+                                        className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="grid md:grid-cols-2 gap-6">
+                                    <div className="space-y-3">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                        {financeForm.type === 'income' ? 'Income Source' : 'Expense Recipient / Source'}
+                                      </label>
+                                      {financeForm.type === 'income' ? (
+                                        <div className="space-y-3">
+                                          <div className="flex gap-2 p-1 bg-white rounded-xl border border-slate-200">
+                                            <button 
+                                              type="button"
+                                              onClick={() => setFinanceForm({...financeForm, incomeSourceType: 'manual', sponsorshipId: ''})}
+                                              className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.incomeSourceType === 'manual' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                            >
+                                              Manual Entry
+                                            </button>
+                                            <button 
+                                              type="button"
+                                              onClick={() => setFinanceForm({...financeForm, incomeSourceType: 'sponsorship'})}
+                                              className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${financeForm.incomeSourceType === 'sponsorship' ? 'bg-brand-primary text-white' : 'text-slate-400 hover:bg-slate-50'}`}
+                                            >
+                                              Sponsorship
+                                            </button>
+                                          </div>
+                                          
+                                          {financeForm.incomeSourceType === 'sponsorship' ? (
+                                            <select 
+                                              value={financeForm.sponsorshipId}
+                                              onChange={(e) => {
+                                                const selected = sponsorships.find(s => s.id === e.target.value);
+                                                setFinanceForm({
+                                                  ...financeForm, 
+                                                  sponsorshipId: e.target.value,
+                                                  description: selected ? `Sponsorship: ${selected.name}` : ''
+                                                });
+                                              }}
+                                              className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                            >
+                                              <option value="">Select Sponsor Company</option>
+                                              {sponsorships.map(s => (
+                                                <option key={s.id} value={s.id}>{s.name}</option>
+                                              ))}
+                                            </select>
+                                          ) : (
+                                            <input 
+                                              type="text"
+                                              value={financeForm.description}
+                                              onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
+                                              className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                              placeholder="e.g. Donation from Local Shop"
+                                            />
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <input 
+                                          type="text"
+                                          value={financeForm.description}
+                                          onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
+                                          className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                                          placeholder="e.g. Paid to Tent Supplier"
+                                        />
+                                      )}
+                                    </div>
+                                    <div className="space-y-3">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Receipt / Bill Attachment *</label>
+                                      <div className="flex items-center gap-3">
+                                        <div className="flex-1 relative">
+                                          <input 
+                                            required
+                                            type="text"
+                                            value={financeForm.attachmentUrl || ''}
+                                            onChange={(e) => setFinanceForm({...financeForm, attachmentUrl: e.target.value})}
+                                            className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-xs font-bold pr-12"
+                                            placeholder="Receipt URL or Upload ->"
+                                          />
+                                          {isUploading === 'finance' ? (
+                                            <Loader2 size={16} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-brand-primary" />
+                                          ) : (
+                                            <label className="absolute right-4 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-brand-primary transition-colors">
+                                              <Upload size={16} />
+                                              <input 
+                                                type="file" 
+                                                className="hidden" 
+                                                accept="image/*,application/pdf"
+                                                onChange={async (e) => {
+                                                  const file = e.target.files?.[0];
+                                                  if (file) {
+                                                    setIsUploading('finance');
+                                                    try {
+                                                      const url = await uploadImage(file);
+                                                      setFinanceForm({...financeForm, attachmentUrl: url});
+                                                    } catch (err: any) { alert(err.message); }
+                                                    finally { setIsUploading(null); }
+                                                  }
+                                                }}
+                                              />
+                                            </label>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <p className="text-[9px] text-slate-400 font-bold">Please upload a scanned copy of the bill or money receipt.</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-3">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Detailed Notes</label>
+                                    <textarea 
+                                      value={financeForm.details || ''}
+                                      onChange={(e) => setFinanceForm({...financeForm, details: e.target.value})}
+                                      rows={2}
+                                      className="w-full px-5 py-4 bg-white border border-slate-200 rounded-2xl outline-none text-sm font-medium resize-none"
+                                      placeholder="Provide more background on this transaction..."
+                                    />
+                                  </div>
+
+                                  <button 
+                                    onClick={async () => {
+                                      const targetProgram = programs.find(p => p.id === financeForm.programId);
+                                      if (targetProgram?.status === 'completed') {
+                                        return alert('This program is completed and its financial records are locked. You cannot add new entries.');
+                                      }
+                                      if (!financeForm.amount || !financeForm.description || !financeForm.programId) return alert('Target program, amount and description are required');
+                                      if (!financeForm.attachmentUrl) return alert('Bill or money receipt attachment is required');
+                                      try {
+                                        await addDoc(collection(db, 'finances'), {
+                                          ...financeForm,
+                                          recordedBy: user?.displayName || 'Admin',
+                                          createdAt: serverTimestamp()
+                                        });
+                                        setFinanceForm({ type: 'income', amount: 0, description: '', category: 'Sponsorship', date: new Date().toISOString().split('T')[0], programId: '', attachmentUrl: '', details: '', incomeSourceType: 'manual', sponsorshipId: '' });
+                                        setShowFinanceForm(false);
+                                      } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'finances'); }
+                                    }}
+                                    className="w-full bg-slate-900 text-white p-5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-slate-900/10 hover:bg-brand-primary hover:shadow-brand-primary/20 hover:-translate-y-0.5 active:translate-y-0 transition-all"
+                                  >
+                                    Confirm Program Entry
+                                  </button>
+                                </motion.div>
+                              )}
+
+                              {showCompleteProgramModal && selectedProgramForFinance !== 'all' && (
+                                <motion.div 
+                                  initial={{ opacity: 0, scale: 0.95 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 space-y-8 text-white relative overflow-hidden"
+                                >
+                                  <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/10 rounded-full -mr-32 -mt-32 blur-3xl" />
+                                  
+                                  <div className="flex items-center justify-between relative z-10">
+                                    <div>
+                                      <h5 className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Finalize Program Accounts</h5>
+                                      <h3 className="text-xl font-bold mt-1 italic font-display">{programs.find(p => p.id === selectedProgramForFinance)?.title}</h3>
+                                    </div>
+                                    <button onClick={() => setShowCompleteProgramModal(false)} className="text-slate-400 hover:text-white transition-colors p-2 hover:bg-white/5 rounded-xl"><X size={20} /></button>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-4 relative z-10">
+                                    {(() => {
+                                      const programLedger = consolidatedFinanceLedger.filter(e => e.programId === selectedProgramForFinance);
+                                      const income = programLedger.filter(e => e.type === 'income').reduce((sum, e) => sum + e.amount, 0);
+                                      const expense = programLedger.filter(e => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0);
+                                      const balance = income - expense;
+
+                                      return (
+                                        <>
+                                          <div className="bg-white/5 p-5 rounded-2xl border border-white/10">
+                                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Total Revenue</p>
+                                            <p className="text-xl font-black text-emerald-400 font-display">৳{income.toLocaleString()}</p>
+                                          </div>
+                                          <div className="bg-white/5 p-5 rounded-2xl border border-white/10">
+                                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Total Expenses</p>
+                                            <p className="text-xl font-black text-red-400 font-display">৳{expense.toLocaleString()}</p>
+                                          </div>
+                                          <div className="col-span-2 bg-brand-primary/10 p-6 rounded-3xl border border-brand-primary/20">
+                                            <div className="flex items-center justify-between">
+                                              <div>
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-brand-primary mb-1">Final Net Balance</p>
+                                                <p className="text-3xl font-black text-white font-display">৳{balance.toLocaleString()}</p>
+                                              </div>
+                                              <div className="w-12 h-12 bg-brand-primary/20 rounded-2xl flex items-center justify-center text-brand-primary shadow-inner">
+                                                <Wallet size={24} />
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </>
+                                      );
+                                    })()}
+                                  </div>
+
+                                  <div className="bg-amber-500/10 p-6 rounded-3xl border border-amber-500/20 flex gap-5 relative z-10">
+                                    <div className="w-10 h-10 bg-amber-500/20 rounded-xl flex items-center justify-center shrink-0">
+                                      <AlertCircle size={20} className="text-amber-500" />
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-black text-amber-500 uppercase tracking-widest">Financial Locking Notice</p>
+                                      <p className="text-xs text-slate-400 mt-1.5 leading-relaxed font-bold">
+                                        Completing this program will permanently lock its financial records. 
+                                        No further income or expense entries will be permitted.
+                                      </p>
+                                      {(() => {
+                                        const targetProgram = programs.find(p => p.id === selectedProgramForFinance);
+                                        if (targetProgram?.date) {
+                                          const programDate = new Date(targetProgram.date);
+                                          const today = new Date();
+                                          today.setHours(0, 0, 0, 0);
+                                          programDate.setHours(0, 0, 0, 0);
+                                          if (programDate > today) {
+                                            return (
+                                              <p className="text-[10px] text-red-400 mt-3 p-2 bg-red-500/10 rounded-lg border border-red-500/20 font-black uppercase tracking-tighter">
+                                                Locked: This program is scheduled for {targetProgram.date}. It can only be closed after this date.
+                                              </p>
+                                            );
+                                          }
+                                        }
+                                        return null;
+                                      })()}
+                                    </div>
+                                  </div>
+
+                                  <button 
+                                    disabled={isUpdatingProgramStatus || (() => {
+                                      const targetProgram = programs.find(p => p.id === selectedProgramForFinance);
+                                      if (targetProgram?.date) {
+                                        const programDate = new Date(targetProgram.date);
+                                        const today = new Date();
+                                        today.setHours(0, 0, 0, 0);
+                                        programDate.setHours(0, 0, 0, 0);
+                                        return programDate > today;
+                                      }
+                                      return false;
+                                    })()}
+                                    onClick={async () => {
+                                      const targetProgram = programs.find(p => p.id === selectedProgramForFinance);
+                                      if (targetProgram?.date) {
+                                        const programDate = new Date(targetProgram.date);
+                                        const today = new Date();
+                                        // Reset hours for accurate date comparison
+                                        today.setHours(0, 0, 0, 0);
+                                        programDate.setHours(0, 0, 0, 0);
+
+                                        if (programDate > today) {
+                                          return alert(`This program is scheduled for ${targetProgram.date}. You cannot close its accounts until the program date has passed.`);
+                                        }
+                                      }
+
+                                      setIsUpdatingProgramStatus(true);
+                                      try {
+                                        await updateDoc(doc(db, 'programs', selectedProgramForFinance), {
+                                          status: 'completed',
+                                          updatedAt: serverTimestamp()
+                                        });
+                                        setShowCompleteProgramModal(false);
+                                      } catch (err) {
+                                        console.error("Error updating program:", err);
+                                        alert("Failed to complete program. Please try again.");
+                                      } finally {
+                                        setIsUpdatingProgramStatus(false);
+                                      }
+                                    }}
+                                    className="w-full bg-brand-primary text-white p-5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:bg-brand-primary/90 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+                                  >
+                                    {isUpdatingProgramStatus ? (
+                                      <>
+                                        <Loader2 size={16} className="animate-spin" /> Finalizing Accounts...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <CheckCircle2 size={16} /> Confirm Completion & Lock Ledger
+                                      </>
+                                    )}
+                                  </button>
+                                </motion.div>
+                              )}
+
+                              {showPublishAccountingModal && (
+                                <motion.div 
+                                  initial={{ opacity: 0, scale: 0.95 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 space-y-8 text-white relative overflow-hidden"
+                                >
+                                  <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full -mr-32 -mt-32 blur-3xl" />
+                                  
+                                  <div className="flex items-center justify-between relative z-10">
+                                    <div>
+                                      <h5 className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Public Transparency</h5>
+                                      <h3 className="text-xl font-bold mt-1 italic font-display">Publish Financial Statement</h3>
+                                    </div>
+                                    <button onClick={() => setShowPublishAccountingModal(false)} className="text-slate-400 hover:text-white transition-colors p-2 hover:bg-white/5 rounded-xl"><X size={20} /></button>
+                                  </div>
+
+                                  <div className="space-y-6 relative z-10">
+                                    <div className="space-y-3">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Select Closed Program</label>
+                                      <select 
+                                        value={selectedProgramToPublish}
+                                        onChange={(e) => setSelectedProgramToPublish(e.target.value)}
+                                        className="w-full px-5 py-4 bg-white/5 border border-white/10 rounded-2xl outline-none text-sm font-bold text-white focus:border-brand-primary transition-all"
+                                      >
+                                        <option value="" className="bg-slate-900">Choose a completed program</option>
+                                        {programs.filter(p => p.status === 'completed' && !p.accountingPublished).map(p => (
+                                          <option key={p.id} value={p.id} className="bg-slate-900">
+                                            {p.title}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+
+                                    {selectedProgramToPublish && (
+                                      <div className="bg-emerald-500/10 p-6 rounded-3xl border border-emerald-500/20 flex gap-5">
+                                        <div className="w-10 h-10 bg-emerald-500/20 rounded-xl flex items-center justify-center shrink-0">
+                                          <Globe size={20} className="text-emerald-500" />
+                                        </div>
+                                        <div>
+                                          <p className="text-sm font-black text-emerald-500 uppercase tracking-widest">Visibility Update</p>
+                                          <p className="text-xs text-slate-400 mt-1.5 leading-relaxed font-bold">
+                                            Publishing will make the complete income, expense, and sponsorship breakdown visible to all users on the program profile page.
+                                          </p>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <button 
+                                      disabled={isPublishingAccounting || !selectedProgramToPublish}
+                                      onClick={async () => {
+                                        setIsPublishingAccounting(true);
+                                        try {
+                                          await updateDoc(doc(db, 'programs', selectedProgramToPublish), {
+                                            accountingPublished: true,
+                                            accountingPublishedAt: serverTimestamp()
+                                          });
+                                          alert('Financial statement has been published to the program profile.');
+                                          setShowPublishAccountingModal(false);
+                                          setSelectedProgramToPublish('');
+                                        } catch (err) {
+                                          console.error("Error publishing accounting:", err);
+                                          alert("Failed to publish accounting data.");
+                                        } finally {
+                                          setIsPublishingAccounting(false);
+                                        }
+                                      }}
+                                      className="w-full bg-emerald-600 text-white p-5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-emerald-600/20 hover:bg-emerald-500 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+                                    >
+                                      {isPublishingAccounting ? (
+                                        <>
+                                          <Loader2 size={16} className="animate-spin" /> Publishing...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Globe size={16} /> Publish Financial Statement
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </motion.div>
+                              )}
+
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                  <thead>
+                                    <tr className="bg-slate-50/50 border-b border-slate-100">
+                                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Registrant</th>
+                                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">ID / Details</th>
+                                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Category</th>
+                                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Amount</th>
+                                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Docs</th>
+                                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Action</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-50">
+                                    {programLedger.map(entry => {
+                                      const entryUser = entry.userId ? allUsers.find(u => u.id === entry.userId) : null;
+                                      const photo = entry.profilePicture || entryUser?.profilePicture || entryUser?.photoURL;
+                                      
+                                      return (
+                                        <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors group">
+                                          <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                              <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden shrink-0 border border-slate-200">
+                                                {photo ? (
+                                                  <img src={photo} alt="" className="w-full h-full object-cover" />
+                                                ) : (
+                                                  <Users size={14} className="text-slate-400" />
+                                                )}
+                                              </div>
+                                              <div>
+                                                <div className="text-[11px] font-black text-slate-900 leading-none mb-1">
+                                                  {entry.userName || entryUser?.displayName || 'N/A'}
+                                                </div>
+                                                <div className="text-[9px] font-bold text-slate-400">
+                                                  {entry.userId?.substring(0, 10).toUpperCase() || 'EXTERNAL'}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </td>
+                                          <td className="px-6 py-4">
+                                            <div className="text-sm font-bold text-slate-900 leading-tight">{entry.description}</div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                              <Calendar size={10} className="text-slate-300" />
+                                              <span className="text-[9px] text-slate-400 font-bold">{entry.date}</span>
+                                              {entryUser?.memberCode && (
+                                                <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded tracking-tighter uppercase whitespace-nowrap">
+                                                  ID: {entryUser.memberCode}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-6 py-4">
+                                            <span className={`text-[10px] font-black uppercase tracking-tighter px-2.5 py-1 rounded-lg ${
+                                              entry.category === 'Program Fee' ? 'bg-amber-100 text-amber-700' : 
+                                              entry.category === 'Sponsorship' ? 'bg-green-100 text-green-700' : 
+                                              'bg-slate-100 text-slate-500'
+                                            }`}>
+                                              {entry.category || 'General'}
+                                            </span>
+                                          </td>
+                                          <td className={`px-6 py-4 text-sm font-black text-right font-display ${entry.type === 'income' ? 'text-green-600' : 'text-red-500'}`}>
+                                            {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
+                                          </td>
+                                          <td className="px-6 py-4 text-center">
+                                            {entry.attachmentUrl ? (
+                                              <a 
+                                                href={entry.attachmentUrl} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                className="w-8 h-8 rounded-lg bg-brand-primary/5 text-brand-primary flex items-center justify-center mx-auto hover:bg-brand-primary hover:text-white transition-all shadow-sm"
+                                              >
+                                                <FileText size={14} />
+                                              </a>
+                                            ) : (
+                                              <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest opacity-20 italic">None</span>
+                                            )}
+                                          </td>
+                                          <td className="px-6 py-4 text-center">
+                                            {!entry.isAuto ? (
+                                              <button 
+                                                onClick={async () => { if(confirm('Delete program transaction?')) await deleteDoc(doc(db, 'finances', entry.id)); }}
+                                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                              >
+                                                <Trash2 size={16} />
+                                              </button>
+                                            ) : (
+                                              <div className="flex flex-col items-center gap-0.5">
+                                                <ShieldCheck size={12} className="text-slate-300" />
+                                                <span className="text-[7px] font-black text-slate-300 uppercase tracking-widest">Auto</span>
+                                              </div>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                    {programLedger.length === 0 && (
+                                      <tr>
+                                        <td colSpan={6} className="px-6 py-16 text-center">
+                                          <p className="text-xs font-black text-slate-300 uppercase tracking-widest">No entries for this program</p>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
                 ) : adminTab === 'finance' ? (
                   <div className="space-y-6">
                     {/* General Ledger only in Finances tab */}
                     <div className="space-y-6">
                       {/* General Ledger */}
                         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-                          <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-                            <div>
-                              <h3 className="font-display font-bold text-xl text-slate-900">Finance Ledger</h3>
-                              <p className="text-xs text-slate-500 mt-1">Track income and expenditures</p>
+                          <div className="p-8 border-b border-slate-50">
+                            <div className="flex items-center justify-between mb-8">
+                              <div>
+                                <h3 className="font-display font-bold text-xl text-slate-900">Finance Ledger</h3>
+                                <p className="text-xs text-slate-500 mt-1">Track income and expenditures</p>
+                              </div>
+                              <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
+                                  <div className="text-xl font-display font-bold text-slate-900">
+                                    ৳ {consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={() => setShowFinanceForm(!showFinanceForm)}
+                                  className="bg-slate-900 text-white p-3 rounded-xl hover:bg-brand-primary transition-all"
+                                >
+                                  {showFinanceForm ? <Minus size={20} /> : <Plus size={20} />}
+                                </button>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-4">
-                              <div className="text-right">
-                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Balance</div>
-                                <div className="text-xl font-display font-bold text-slate-900">
-                                  ৳ {consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0).toLocaleString()}
+
+                            {/* Search, Filter & Sort Controls */}
+                            <div className="bg-slate-50/50 p-6 rounded-[2rem] border border-slate-100 mb-2 space-y-6">
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div className="md:col-span-2 relative">
+                                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                  <input 
+                                    type="text"
+                                    placeholder="Search by description, source or category..."
+                                    value={financeSearch}
+                                    onChange={(e) => setFinanceSearch(e.target.value)}
+                                    className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium focus:ring-2 focus:ring-brand-primary/10 transition-all shadow-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <select 
+                                    value={financeTypeFilter}
+                                    onChange={(e) => setFinanceTypeFilter(e.target.value as any)}
+                                    className="w-full h-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold text-slate-600 shadow-sm"
+                                  >
+                                    <option value="all">All Types</option>
+                                    <option value="income">Income Only</option>
+                                    <option value="expense">Expense Only</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <select 
+                                    value={financeCategoryFilter}
+                                    onChange={(e) => setFinanceCategoryFilter(e.target.value)}
+                                    className="w-full h-full px-4 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-bold text-slate-600 shadow-sm"
+                                  >
+                                    <option value="all">All Categories</option>
+                                    {uniqueCategories.map(cat => (
+                                      <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                  </select>
                                 </div>
                               </div>
-                              <button 
-                                onClick={() => setShowFinanceForm(!showFinanceForm)}
-                                className="bg-slate-900 text-white p-3 rounded-xl hover:bg-brand-primary transition-all"
-                              >
-                                {showFinanceForm ? <Minus size={20} /> : <Plus size={20} />}
-                              </button>
+
+                              <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-100">
+                                <div className="flex items-center gap-4">
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sort:</span>
+                                  <div className="flex bg-white rounded-lg border border-slate-200 p-1 shadow-sm">
+                                    <button 
+                                      onClick={() => setFinanceSortField('date')}
+                                      className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${financeSortField === 'date' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                    >
+                                      Date
+                                    </button>
+                                    <button 
+                                      onClick={() => setFinanceSortField('amount')}
+                                      className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${financeSortField === 'amount' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                    >
+                                      Amount
+                                    </button>
+                                  </div>
+                                  <button 
+                                    onClick={() => setFinanceSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                                    className="p-2 bg-white border border-slate-200 rounded-lg text-slate-500 hover:text-slate-900 transition-colors shadow-sm"
+                                    title={financeSortOrder === 'asc' ? 'Sort Descending' : 'Sort Ascending'}
+                                  >
+                                    {financeSortOrder === 'asc' ? <ArrowUpAZ size={16} /> : <ArrowDownZA size={16} />}
+                                  </button>
+                                </div>
+                                
+                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                  Showing {filteredAndSortedLedger.length} Results
+                                </div>
+                              </div>
                             </div>
                           </div>
 
@@ -5758,33 +8058,93 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="grid md:grid-cols-2 gap-6">
-                                  <div className="space-y-4">
-                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
-                                    <input 
-                                      type="text"
-                                      value={financeForm.description}
-                                      onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
-                                      className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                                      placeholder="e.g., General Donation"
-                                    />
+                                  <div className="flex gap-6">
+                                    <div className="flex-1 space-y-4">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
+                                      <input 
+                                        type="text"
+                                        value={financeForm.description}
+                                        onChange={(e) => setFinanceForm({...financeForm, description: e.target.value})}
+                                        className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                        placeholder="e.g., General Donation"
+                                      />
+                                    </div>
+                                    <div className="flex-1 space-y-4">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document (Receipt/Bill)</label>
+                                      <div className="relative">
+                                        <input 
+                                          type="text"
+                                          value={financeForm.attachmentUrl || ''}
+                                          onChange={(e) => setFinanceForm({...financeForm, attachmentUrl: e.target.value})}
+                                          className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium pr-12"
+                                          placeholder="Upload document ->"
+                                        />
+                                        {isUploading === 'finance-main' ? (
+                                          <Loader2 size={16} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-brand-primary" />
+                                        ) : (
+                                          <label className="absolute right-4 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-brand-primary transition-colors">
+                                            <Upload size={16} />
+                                            <input 
+                                              type="file" 
+                                              className="hidden" 
+                                              accept="image/*,application/pdf"
+                                              onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                  setIsUploading('finance-main');
+                                                  try {
+                                                    const url = await uploadImage(file);
+                                                    setFinanceForm({...financeForm, attachmentUrl: url});
+                                                  } catch (err: any) { alert(err.message); }
+                                                  finally { setIsUploading(null); }
+                                                }
+                                              }}
+                                            />
+                                          </label>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="space-y-4">
-                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
-                                    <select 
-                                      value={financeForm.category}
-                                      onChange={(e) => setFinanceForm({...financeForm, category: e.target.value})}
-                                      className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
-                                    >
-                                      <option value="">Select Category</option>
-                                      <option value="Membership">Membership</option>
-                                      <option value="Donation">Donation</option>
-                                      <option value="Event">Event</option>
-                                      <option value="Office">Office</option>
-                                    </select>
+                                  <div className="flex gap-6">
+                                    {financeForm.type === 'income' && (
+                                      <div className="flex-1 space-y-4">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Source</label>
+                                        <input 
+                                          type="text"
+                                          value={financeForm.source}
+                                          onChange={(e) => setFinanceForm({...financeForm, source: e.target.value})}
+                                          className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium"
+                                          placeholder="Enter source"
+                                        />
+                                      </div>
+                                    )}
+                                    <div className="flex-1 space-y-4">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category</label>
+                                      <div className="relative">
+                                        <input 
+                                          list="finance-categories"
+                                          value={financeForm.category}
+                                          onChange={(e) => setFinanceForm({...financeForm, category: e.target.value})}
+                                          className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium appearance-none"
+                                          placeholder="Select or type..."
+                                        />
+                                        <datalist id="finance-categories">
+                                          {uniqueCategories.map(cat => (
+                                            <option key={cat} value={cat} />
+                                          ))}
+                                        </datalist>
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                                 <button 
                                   onClick={async () => {
+                                    if (financeForm.programId) {
+                                      const targetProgram = programs.find(p => p.id === financeForm.programId);
+                                      if (targetProgram?.status === 'completed') {
+                                        return alert('The selected program is completed and locked. You cannot add new entries to it.');
+                                      }
+                                    }
                                     if (!financeForm.amount || !financeForm.description) return alert('Required fields missing');
                                     try {
                                       await addDoc(collection(db, 'finances'), {
@@ -5792,7 +8152,19 @@ export default function App() {
                                         recordedBy: user?.displayName || 'Admin',
                                         createdAt: serverTimestamp()
                                       });
-                                      setFinanceForm({ type: 'income', amount: 0, description: '', category: '', date: new Date().toISOString().split('T')[0] });
+                                      setFinanceForm({ 
+                                        type: 'income', 
+                                        amount: 0, 
+                                        description: '', 
+                                        category: '', 
+                                        source: '',
+                                        date: new Date().toISOString().split('T')[0],
+                                        programId: '',
+                                        attachmentUrl: '',
+                                        details: '',
+                                        incomeSourceType: 'manual',
+                                        sponsorshipId: ''
+                                      });
                                       setShowFinanceForm(false);
                                     } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'finances'); }
                                   }}
@@ -5815,11 +8187,34 @@ export default function App() {
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
-                                  {consolidatedFinanceLedger.map(entry => (
+                                  {filteredAndSortedLedger.map(entry => (
                                     <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
                                       <td className="px-6 py-4">
-                                        <div className="text-sm font-bold text-slate-900">{entry.description}</div>
-                                        <div className="text-[10px] text-slate-400">{entry.date}</div>
+                                        <div className="flex items-center justify-between">
+                                          <div>
+                                            <div className="text-sm font-bold text-slate-900">{entry.description}</div>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                              <span className="text-[10px] text-slate-400">{entry.date}</span>
+                                              {entry.source && (
+                                                <>
+                                                  <span className="text-[10px] text-slate-200">|</span>
+                                                  <span className="text-[10px] text-brand-primary font-bold">Source: {entry.source}</span>
+                                                </>
+                                              )}
+                                            </div>
+                                          </div>
+                                          {entry.attachmentUrl && (
+                                            <a 
+                                              href={entry.attachmentUrl} 
+                                              target="_blank" 
+                                              rel="noopener noreferrer"
+                                              className="p-2 bg-slate-100 text-slate-500 hover:bg-brand-primary/10 hover:text-brand-primary transition-all rounded-lg"
+                                              title="View document"
+                                            >
+                                              <FileText size={16} />
+                                            </a>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="px-6 py-4">
                                         <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{entry.category || 'General'}</span>
@@ -5864,36 +8259,36 @@ export default function App() {
                       </div>
 
                       {/* Quick Stats */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                         <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
-                          <div className="absolute top-0 right-0 w-24 h-24 bg-brand-primary/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-brand-primary/10 transition-colors" />
-                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
-                            {selectedFeeFilter === 'all' ? 'Total Collection' : 'Fee Collection'}
-                          </p>
-                          <div className="text-3xl font-black text-brand-primary font-display italic">
-                            ৳{memberFinancialReports.reduce((sum, m) => sum + m.totalPaid, 0).toLocaleString()}
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-emerald-500/10 transition-colors" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Total Collection</p>
+                          <div className="text-3xl font-black text-emerald-600 font-display italic">
+                            ৳{consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc, 0).toLocaleString()}
                           </div>
                         </div>
+
                         <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
                           <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-red-500/10 transition-colors" />
-                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
-                            {selectedFeeFilter === 'all' ? 'Total Dues' : 'Fee Dues'}
-                          </p>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Total Expense</p>
                           <div className="text-3xl font-black text-red-500 font-display italic">
-                            ৳{(memberFinancialReports.reduce((sum, m) => sum + m.totalDue, 0) + memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0)).toLocaleString()}
+                            ৳{consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'expense' ? acc + curr.amount : acc, 0).toLocaleString()}
                           </div>
-                          {memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0) > 0 && (
-                            <div className="mt-1 flex items-center gap-1.5 text-[9px] font-bold text-amber-500 uppercase tracking-tighter">
-                              <Clock size={10} />
-                              ৳{memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0).toLocaleString()} Pending Review
-                            </div>
-                          )}
                         </div>
+
                         <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
                           <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-amber-500/10 transition-colors" />
-                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Relevant Members</p>
-                          <div className="text-3xl font-black text-slate-900 font-display italic">
-                            {memberFinancialReports.length}
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Total Dues</p>
+                          <div className="text-3xl font-black text-amber-500 font-display italic">
+                            ৳{(memberFinancialReports.reduce((sum, m) => sum + m.totalDue, 0) + memberFinancialReports.reduce((sum, m) => sum + m.totalPending, 0)).toLocaleString()}
+                          </div>
+                        </div>
+                        
+                        <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-brand-primary/5 rounded-full -mr-12 -mt-12 blur-2xl group-hover:bg-brand-primary/10 transition-colors" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Net Balance</p>
+                          <div className="text-3xl font-black text-brand-primary font-display italic">
+                            ৳{(consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc, 0) - consolidatedFinanceLedger.reduce((acc, curr) => curr.type === 'expense' ? acc + curr.amount : acc, 0)).toLocaleString()}
                           </div>
                         </div>
                       </div>
@@ -5915,24 +8310,44 @@ export default function App() {
                           {/* Fee Type Filter */}
                           <div className="shrink-0">
                             <select
-                              value={selectedFeeFilter}
-                              onChange={(e) => setSelectedFeeFilter(e.target.value)}
+                              value={ledgerFeeFilter}
+                              onChange={(e) => setLedgerFeeFilter(e.target.value)}
                               className="w-full lg:w-48 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold text-slate-600 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M2%204l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_1rem_center] bg-no-repeat pr-10"
                             >
                               <option value="all">All Fee Structures</option>
                               <option value="reg-fee">Registration Fee</option>
+                              <option value="programs">Program Registrations</option>
                               {feeStructures.map(fee => (
                                 <option key={fee.id} value={fee.id}>{fee.name}</option>
                               ))}
                             </select>
                           </div>
 
+                          {ledgerFeeFilter === 'programs' && (
+                            <div className="shrink-0">
+                              <select
+                                value={ledgerProgramFilter}
+                                onChange={(e) => setLedgerProgramFilter(e.target.value)}
+                                className="w-full lg:w-48 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold text-slate-600 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M2%204l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_1rem_center] bg-no-repeat pr-10"
+                              >
+                                <option value="all">All Programs</option>
+                                {programs.map(p => (
+                                  <option key={p.id} value={p.id}>{p.title}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
                           <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
-                            {[
+                            {(ledgerFeeFilter === 'programs' ? [
+                              { id: 'all', label: 'All', icon: Users },
+                              { id: 'income', label: 'Income', icon: Check },
+                              { id: 'expense', label: 'Expense', icon: TrendingDown }
+                            ] : [
                               { id: 'all', label: 'All', icon: Users },
                               { id: 'due', label: 'Dues', icon: Clock },
                               { id: 'paid', label: 'Paid', icon: Check }
-                            ].map(tab => (
+                            ]).map(tab => (
                               <button
                                 key={tab.id}
                                 onClick={() => setFinancialTransparencyFilter(tab.id)}
@@ -5956,101 +8371,161 @@ export default function App() {
                           <table className="w-full text-left border-collapse">
                             <thead>
                               <tr className="bg-slate-50/50 border-b border-slate-100">
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Member Information</th>
-                                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Total Paid (BDT)</th>
-                                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Outstanding Due</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Payment Status</th>
+                                {financialTransparencyFilter === 'due' && ledgerFeeFilter !== 'programs' ? (
+                                  <>
+                                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Member Information</th>
+                                    <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Total Paid</th>
+                                    <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Outstanding Due</th>
+                                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Status</th>
+                                  </>
+                                ) : (
+                                  <>
+                                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date & Description</th>
+                                    <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Category</th>
+                                    <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Debit / Credit</th>
+                                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Recorded By</th>
+                                  </>
+                                )}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
-                              {memberFinancialReports.map(m => (
-                                <motion.tr 
-                                  layout
-                                  initial={{ opacity: 0 }}
-                                  animate={{ opacity: 1 }}
-                                  key={m.id} 
-                                  className="hover:bg-slate-50/50 transition-colors group"
-                                >
-                                  <td className="px-8 py-5">
-                                    <div className="flex items-center gap-4">
-                                      <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-slate-50 shadow-sm shrink-0">
-                                        <img 
-                                          src={m.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.id}`} 
-                                          alt="" 
-                                          className="w-full h-full object-cover" 
-                                        />
-                                      </div>
-                                      <div>
-                                        <div className="font-bold text-slate-900 text-sm tracking-tight">{m.name}</div>
-                                        <div className="flex items-center gap-2 mt-0.5">
-                                          <span className="text-[10px] font-black text-brand-primary bg-brand-primary/5 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                                            {m.memberCode || 'New Member'}
-                                          </span>
-                                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-tight ${executiveMembers.some(ecm => ecm.userId === m.id) ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                                            {executiveMembers.some(ecm => ecm.userId === m.id) ? 'Executive' : 'Association'}
-                                          </span>
+                              {(() => {
+                                const renderDuesView = financialTransparencyFilter === 'due' && ledgerFeeFilter !== 'programs';
+                                
+                                if (renderDuesView) {
+                                  const reports = memberFinancialReports
+                                    .filter(m => m.totalDue > 0 || m.totalPending > 0)
+                                    .filter(m => {
+                                      if (financialTransparencySearch) {
+                                        return m.name.toLowerCase().includes(financialTransparencySearch.toLowerCase()) ||
+                                               m.memberCode?.toLowerCase().includes(financialTransparencySearch.toLowerCase());
+                                      }
+                                      return true;
+                                    });
+
+                                  if (reports.length === 0) {
+                                    return (
+                                      <tr>
+                                        <td colSpan={4} className="px-6 py-20 text-center">
+                                          <div className="flex flex-col items-center gap-4">
+                                            <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center">
+                                              <Users size={24} className="text-slate-200" />
+                                            </div>
+                                            <div className="space-y-1">
+                                              <p className="text-sm font-black text-slate-900 uppercase tracking-widest italic">No outstanding dues</p>
+                                              <p className="text-xs text-slate-400 font-bold">Great! All members in this filter are up to date.</p>
+                                            </div>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  return reports.map(m => (
+                                    <motion.tr 
+                                      layout
+                                      initial={{ opacity: 0 }}
+                                      animate={{ opacity: 1 }}
+                                      key={m.id} 
+                                      className="hover:bg-slate-50/50 transition-colors group"
+                                    >
+                                      <td className="px-8 py-5 text-sm">
+                                        <div className="flex items-center gap-3">
+                                          <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm shrink-0 bg-slate-100 flex items-center justify-center">
+                                            {m.profilePicture ? (
+                                              <img src={m.profilePicture} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                              <Users size={16} className="text-slate-300" />
+                                            )}
+                                          </div>
+                                          <div className="flex flex-col">
+                                            <span className="font-bold text-slate-900">{m.name}</span>
+                                            <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{m.memberCode || 'Candidate'}</span>
+                                          </div>
                                         </div>
+                                      </td>
+                                      <td className="px-6 py-5 text-center text-sm font-bold text-slate-600">৳{m.totalPaid.toLocaleString()}</td>
+                                      <td className="px-6 py-5 text-center">
+                                        <div className="flex flex-col items-center">
+                                          <span className="text-sm font-black text-red-500">৳{m.totalDue.toLocaleString()}</span>
+                                          {m.totalPending > 0 && <span className="text-[9px] font-bold text-amber-500">৳{m.totalPending.toLocaleString()} Pending</span>}
+                                        </div>
+                                      </td>
+                                      <td className="px-8 py-5 text-right">
+                                        <span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase tracking-widest border border-red-100">Action Required</span>
+                                      </td>
+                                    </motion.tr>
+                                  ));
+                                }
+
+                                const ledger = consolidatedFinanceLedger
+                                  .filter(e => {
+                                    if (financialTransparencySearch) {
+                                      return e.description.toLowerCase().includes(financialTransparencySearch.toLowerCase()) ||
+                                             e.category?.toLowerCase().includes(financialTransparencySearch.toLowerCase());
+                                    }
+                                    return true;
+                                  })
+                                  .filter(e => {
+                                    if (ledgerFeeFilter === 'programs') {
+                                      if (financialTransparencyFilter === 'income') return e.type === 'income';
+                                      if (financialTransparencyFilter === 'expense') return e.type === 'expense';
+                                      return true;
+                                    } else {
+                                      if (financialTransparencyFilter === 'paid') return e.type === 'income';
+                                      return true;
+                                    }
+                                  });
+
+                                if (ledger.length === 0) {
+                                  return (
+                                    <tr>
+                                      <td colSpan={4} className="px-6 py-20 text-center">
+                                        <div className="flex flex-col items-center gap-4">
+                                          <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center">
+                                            <Search size={24} className="text-slate-200" />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <p className="text-sm font-black text-slate-900 uppercase tracking-widest italic">No transactions found</p>
+                                            <p className="text-xs text-slate-400 font-bold">Try adjusting your filters or search terms.</p>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
+                                return ledger.map((entry, idx) => (
+                                  <motion.tr 
+                                    layout
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    key={`${entry.id}-${idx}`} 
+                                    className="hover:bg-slate-50/50 transition-colors group"
+                                  >
+                                    <td className="px-8 py-5">
+                                      <div className="flex flex-col">
+                                        <span className="font-bold text-slate-900 text-sm tracking-tight">{entry.description}</span>
+                                        <span className="text-[10px] text-slate-400 mt-0.5">{entry.date}</span>
                                       </div>
-                                    </div>
-                                  </td>
-                                  <td className="px-6 py-5 text-center">
-                                    <div className="inline-flex flex-col items-center">
-                                      <span className="text-sm font-black text-slate-900 font-display">৳{m.totalPaid.toLocaleString()}</span>
-                                      <span className={`text-[9px] font-bold uppercase tracking-tighter ${['approved', 'pending_secretary'].includes(m.membershipStatus) ? 'text-slate-400' : 'text-amber-500'}`}>
-                                        {['approved', 'pending_secretary'].includes(m.membershipStatus) ? 'Verified' : 'Pending Review'}
+                                    </td>
+                                    <td className="px-6 py-5 text-center">
+                                      <span className="inline-block text-[10px] font-black text-brand-primary bg-brand-primary/5 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                                        {entry.category || 'General'}
                                       </span>
-                                    </div>
-                                  </td>
-                                  <td className="px-6 py-5 text-center">
-                                    <div className="inline-flex flex-col items-center gap-2">
-                                      {m.totalPending > 0 && (
-                                        <div className="flex flex-col items-center">
-                                          <span className="text-sm font-black font-display text-amber-500">
-                                            ৳{m.totalPending.toLocaleString()}
-                                          </span>
-                                          <span className="text-[9px] font-bold text-amber-400 uppercase tracking-tighter">Pending</span>
-                                        </div>
-                                      )}
-                                      {m.totalDue > 0 && (
-                                        <div className="flex flex-col items-center">
-                                          <span className="text-sm font-black font-display text-red-500">
-                                            ৳{m.totalDue.toLocaleString()}
-                                          </span>
-                                          <span className="text-[9px] font-bold text-red-400 uppercase tracking-tighter">Due</span>
-                                        </div>
-                                      )}
-                                      {m.totalPending === 0 && m.totalDue === 0 && (
-                                        <span className="text-sm font-black font-display text-slate-300">৳0</span>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="px-8 py-5 text-right">
-                                    <span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border inline-flex items-center gap-2 shadow-sm ${
-                                      (m.totalDue === 0 && m.totalPending === 0)
-                                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100' 
-                                        : m.totalPending > 0 
-                                          ? 'bg-amber-50 text-amber-600 border-amber-100'
-                                          : 'bg-red-50 text-red-500 border-red-100'
-                                    }`}>
-                                      <div className={`w-1.5 h-1.5 rounded-full ${
-                                        (m.totalDue === 0 && m.totalPending === 0) 
-                                          ? 'bg-emerald-500' 
-                                          : m.totalPending > 0 
-                                            ? 'bg-amber-500 animate-pulse' 
-                                            : 'bg-red-500 animate-pulse'
-                                      }`} />
-                                      {(m.totalDue === 0 && m.totalPending === 0) ? 'Settled' : m.totalPending > 0 ? 'Pending Review' : 'Action Required'}
-                                    </span>
-                                  </td>
-                                </motion.tr>
-                              ))}
-                              {memberFinancialReports.length === 0 && (
-                                <tr>
-                                  <td colSpan={4} className="px-6 py-16 text-center">
-                                    <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">No matching results</p>
-                                  </td>
-                                </tr>
-                              )}
+                                    </td>
+                                    <td className={`px-6 py-5 text-sm font-black text-right font-display ${entry.type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
+                                      {entry.type === 'income' ? '+' : '-'} ৳{entry.amount.toLocaleString()}
+                                    </td>
+                                    <td className="px-8 py-5 text-right">
+                                      <div className="flex flex-col items-end">
+                                        <span className="text-[10px] font-bold text-slate-600">{entry.recordedBy || 'System'}</span>
+                                        {entry.isAuto && <span className="text-[8px] font-black text-slate-300 uppercase tracking-tighter">Automatic Entry</span>}
+                                      </div>
+                                    </td>
+                                  </motion.tr>
+                                ));
+                              })()}
                             </tbody>
                           </table>
                         </div>
@@ -6286,6 +8761,169 @@ export default function App() {
                   </div>
                 ) : (adminTab === 'programs' || adminTab === 'create_program') ? (
                   <div className="space-y-6">
+                    {viewingRegistrantsId && (
+                      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="bg-white rounded-[2.5rem] w-full max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+                        >
+                          <div className="p-8 border-b border-slate-50 flex items-center justify-between shrink-0">
+                            <div>
+                              <h3 className="text-2xl font-display font-bold text-slate-900">Program Registrants</h3>
+                              <p className="text-xs text-brand-primary font-bold uppercase tracking-widest mt-1">
+                                {programs.find(p => p.id === viewingRegistrantsId)?.title}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <button 
+                                onClick={() => {
+                                  const programRegs = registrations.filter(r => r.programId === viewingRegistrantsId);
+                                  const currentProgram = programs.find(p => p.id === viewingRegistrantsId);
+                                  const customFields = currentProgram?.registrationFields || [];
+                                  
+                                  // Prepare rows with proper CSV escaping
+                                  const headers = ['User ID', 'Name', 'Email', 'Session', 'Phone', 'Status', ...customFields.map(f => f.label), 'Applied On'];
+                                  
+                                  const data = programRegs.map(reg => {
+                                    const regUser = allUsers.find(u => u.id === reg.userId);
+                                    return [
+                                      regUser?.memberCode || reg.userId,
+                                      reg.userName,
+                                      reg.userEmail,
+                                      regUser?.session || 'N/A',
+                                      regUser?.phone || 'N/A',
+                                      reg.status,
+                                      ...customFields.map(f => reg.answers?.[f.label] || ''),
+                                      new Date(reg.submittedAt).toLocaleDateString()
+                                    ];
+                                  });
+
+                                  const csvRows = [
+                                    headers.join(','),
+                                    ...data.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+                                  ];
+
+                                  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                                  const url = URL.createObjectURL(blob);
+                                  const link = document.createElement('a');
+                                  link.href = url;
+                                  link.setAttribute('download', `${(currentProgram?.title || 'program').replace(/\s+/g, '_').toLowerCase()}_registrants.csv`);
+                                  document.body.appendChild(link);
+                                  link.click();
+                                  document.body.removeChild(link);
+                                }}
+                                className="flex items-center gap-2 px-6 py-2.5 bg-brand-primary/10 hover:bg-brand-primary/20 text-brand-primary rounded-full text-xs font-bold transition-all"
+                              >
+                                <Download size={14} /> Export CSV
+                              </button>
+                              <button 
+                                onClick={() => setViewingRegistrantsId(null)}
+                                className="w-12 h-12 rounded-full hover:bg-slate-50 flex items-center justify-center text-slate-400 transition-colors"
+                              >
+                                <X size={24} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex-1 overflow-auto p-8">
+                            {(() => {
+                              const programRegs = registrations.filter(r => r.programId === viewingRegistrantsId);
+                              const currentProgram = programs.find(p => p.id === viewingRegistrantsId);
+                              const customFields = currentProgram?.registrationFields || [];
+
+                              if (programRegs.length === 0) {
+                                return (
+                                  <div className="text-center py-20">
+                                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                                      <Users size={32} />
+                                    </div>
+                                    <p className="text-slate-500 font-medium">No registrations yet for this program.</p>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="min-w-max">
+                                  <table className="w-full text-left border-collapse">
+                                    <thead>
+                                      <tr className="border-b border-slate-100">
+                                        <th className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">User ID</th>
+                                        <th className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Name</th>
+                                        <th className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Session</th>
+                                        <th className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Phone</th>
+                                        <th className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Status</th>
+                                        {customFields.map(field => (
+                                          <th key={field.id} className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">{field.label}</th>
+                                        ))}
+                                        <th className="pb-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Applied On</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                      {programRegs.map(reg => {
+                                        const regUser = allUsers.find(u => u.id === reg.userId);
+                                        return (
+                                          <tr key={reg.id} className="hover:bg-slate-50/50 transition-colors group">
+                                            <td className="py-4 px-4">
+                                              <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                                                {regUser?.memberCode || reg.userId.substring(0, 8)}
+                                              </span>
+                                            </td>
+                                            <td className="py-4 px-4">
+                                              <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-brand-primary/10 flex items-center justify-center text-brand-primary font-bold overflow-hidden text-[10px] shrink-0">
+                                                  {regUser?.profilePicture || regUser?.photoURL ? (
+                                                    <img src={regUser?.profilePicture || regUser?.photoURL} alt="" className="w-full h-full object-cover" />
+                                                  ) : (
+                                                    reg.userName.charAt(0)
+                                                  )}
+                                                </div>
+                                                <div>
+                                                  <p className="text-xs font-bold text-slate-900 leading-none mb-0.5">{reg.userName}</p>
+                                                  <p className="text-[9px] text-slate-400 font-medium leading-none">{reg.userEmail}</p>
+                                                </div>
+                                              </div>
+                                            </td>
+                                            <td className="py-4 px-4">
+                                              <span className="text-[11px] font-bold text-slate-600">{regUser?.session || 'N/A'}</span>
+                                            </td>
+                                            <td className="py-4 px-4">
+                                              <span className="text-[11px] font-bold text-slate-600">{regUser?.phone || 'N/A'}</span>
+                                            </td>
+                                            <td className="py-4 px-4">
+                                              <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                                                reg.status === 'confirmed' ? 'bg-green-100 text-green-700' : 
+                                                reg.status === 'cancelled' ? 'bg-red-100 text-red-700' : 
+                                                'bg-blue-100 text-blue-700'
+                                              }`}>
+                                                {reg.status}
+                                              </span>
+                                            </td>
+                                            {customFields.map(field => (
+                                              <td key={field.id} className="py-4 px-4">
+                                                <span className="text-[11px] font-medium text-slate-600">
+                                                  {reg.answers?.[field.label] || '-'}
+                                                </span>
+                                              </td>
+                                            ))}
+                                            <td className="py-4 px-4 text-right">
+                                              <span className="text-[10px] text-slate-400 font-bold whitespace-nowrap">
+                                                {new Date(reg.submittedAt).toLocaleDateString()}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </motion.div>
+                      </div>
+                    )}
+
                     {isAddingProgram ? (
                       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
                         <div className="p-8 border-b border-slate-50 flex items-center justify-between">
@@ -6348,26 +8986,66 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="grid md:grid-cols-2 gap-6">
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registration Fee (৳)</label>
-                              <input 
-                                type="number"
-                                value={programForm.registrationFee || 0}
-                                onChange={(e) => setProgramForm({...programForm, registrationFee: parseFloat(e.target.value) || 0})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold"
-                                placeholder="0.00"
-                              />
+                          <div className="space-y-4 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div className="flex flex-col gap-4">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Program Status</label>
+                              <div className="flex p-1 bg-white border border-slate-200 rounded-2xl w-fit">
+                                <button
+                                  type="button"
+                                  onClick={() => setProgramForm({...programForm, status: 'upcoming'})}
+                                  className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${programForm.status === 'upcoming' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                  Upcoming (Future)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProgramForm({...programForm, status: 'completed', registrationEnabled: false, registrationFee: 0, registrationDeadline: ''})}
+                                  className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${programForm.status === 'completed' ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/20' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                  Completed (Past)
+                                </button>
+                              </div>
                             </div>
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registration Last Date</label>
-                              <input 
-                                type="date"
-                                value={programForm.registrationDeadline}
-                                onChange={(e) => setProgramForm({...programForm, registrationDeadline: e.target.value})}
-                                className="w-full p-4 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
-                              />
-                            </div>
+
+                            {programForm.status === 'upcoming' && (
+                              <div className="grid md:grid-cols-2 gap-6 pt-4 border-t border-slate-200/50 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registration Fee (৳)</label>
+                                    <button 
+                                      type="button"
+                                      onClick={() => setProgramForm({...programForm, registrationFee: 0})}
+                                      className="text-[10px] font-bold text-brand-primary hover:underline uppercase tracking-widest"
+                                    >
+                                      Set Free
+                                    </button>
+                                  </div>
+                                  <div className="relative">
+                                    <input 
+                                      type="number"
+                                      value={programForm.registrationFee || 0}
+                                      onChange={(e) => setProgramForm({...programForm, registrationFee: parseFloat(e.target.value) || 0})}
+                                      className="w-full p-4 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-bold"
+                                      placeholder="0.00"
+                                    />
+                                    {programForm.registrationFee === 0 && (
+                                      <div className="absolute right-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-green-500 text-white text-[9px] font-black uppercase tracking-widest rounded-lg shadow-sm">
+                                        Free
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registration Last Date</label>
+                                  <input 
+                                    type="date"
+                                    value={programForm.registrationDeadline}
+                                    onChange={(e) => setProgramForm({...programForm, registrationDeadline: e.target.value})}
+                                    className="w-full p-4 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm"
+                                  />
+                                </div>
+                              </div>
+                            )}
                           </div>
 
                           <div className="space-y-4">
@@ -6473,6 +9151,199 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* Photo Gallery & Drive Link */}
+                          <div className="grid md:grid-cols-2 gap-8 pt-6 border-t border-slate-100">
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Photo Gallery (Max 5)</label>
+                                <span className="text-[10px] font-bold text-slate-300">Optional</span>
+                              </div>
+                              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                <div className="flex flex-wrap gap-3">
+                                  {(programForm.gallery || []).slice(0, 5).map((img, idx) => (
+                                    <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 group">
+                                      <img src={img} alt={`Gallery ${idx}`} className="w-full h-full object-cover" />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const newGallery = [...programForm.gallery];
+                                          newGallery.splice(idx, 1);
+                                          setProgramForm({...programForm, gallery: newGallery});
+                                        }}
+                                        className="absolute inset-0 bg-red-500/80 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  ))}
+                                  {(!programForm.gallery || programForm.gallery.length < 5) && (
+                                    <div className="relative">
+                                      <input 
+                                        type="file"
+                                        id="gallery-photo-upload"
+                                        className="hidden"
+                                        accept="image/*"
+                                        onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) {
+                                            try {
+                                              setIsUploading('gallery');
+                                              const url = await uploadImage(file);
+                                              setProgramForm({...programForm, gallery: [...(programForm.gallery || []), url]});
+                                            } catch (err) {
+                                              alert(err instanceof Error ? err.message : 'Upload failed');
+                                            } finally {
+                                              setIsUploading(null);
+                                            }
+                                          }
+                                        }}
+                                      />
+                                      <label 
+                                        htmlFor="gallery-photo-upload"
+                                        className="w-16 h-16 rounded-xl bg-white border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 hover:bg-slate-50 hover:border-brand-primary transition-all cursor-pointer group"
+                                      >
+                                        {isUploading === 'gallery' ? (
+                                          <Loader2 size={16} className="animate-spin text-brand-primary" />
+                                        ) : (
+                                          <Plus size={16} className="group-hover:scale-110 transition-transform" />
+                                        )}
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-4 italic leading-relaxed">Add up to 5 highlight photos to show some memories of the program.</p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Full Album Link (Drive/FB)</label>
+                                <span className="text-[10px] font-bold text-slate-300">Optional</span>
+                              </div>
+                              <div className="relative group">
+                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-primary transition-colors">
+                                  <FolderOpen size={18} />
+                                </div>
+                                <input 
+                                  type="url"
+                                  value={programForm.driveLink || ''}
+                                  onChange={(e) => setProgramForm({...programForm, driveLink: e.target.value})}
+                                  placeholder="https://drive.google.com/..."
+                                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-brand-primary/10 transition-all text-sm font-medium"
+                                />
+                              </div>
+                              <p className="text-[10px] text-slate-400 italic mt-2 leading-relaxed">Provide a link to a Google Drive folder or Social Media album.</p>
+                            </div>
+                          </div>
+
+                          {programForm.status === 'upcoming' && (
+                            <div className="space-y-4 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-xl bg-brand-primary/10 flex items-center justify-center text-brand-primary">
+                                    <LinkIcon size={20} />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-sm font-bold text-slate-800">Registration Link Settings</h4>
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Enable online forms for members</p>
+                                  </div>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={programForm.registrationEnabled}
+                                    onChange={(e) => setProgramForm({...programForm, registrationEnabled: e.target.checked})}
+                                  />
+                                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-primary"></div>
+                                </label>
+                              </div>
+
+                              {programForm.registrationEnabled && (
+                                <div className="space-y-6 pt-4 border-t border-slate-200/50 mt-4">
+                                  <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Custom Form Fields</label>
+                                      <button 
+                                        type="button"
+                                        onClick={() => {
+                                          const newField = { id: Math.random().toString(36).substr(2, 9), label: '', type: 'text' as const, required: true };
+                                          setProgramForm({
+                                            ...programForm, 
+                                            registrationFields: [...(programForm.registrationFields || []), newField]
+                                          });
+                                        }}
+                                        className="text-[10px] font-bold text-brand-primary hover:underline flex items-center gap-1"
+                                      >
+                                        <Plus size={12} /> Add Field
+                                      </button>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      {programForm.registrationFields?.map((field, fIdx) => (
+                                        <div key={field.id} className="bg-white p-4 rounded-xl border border-slate-200 flex items-start gap-4">
+                                          <div className="flex-1 space-y-3">
+                                            <div className="grid grid-cols-2 gap-3">
+                                              <input 
+                                                placeholder="Field Label (e.g. T-Shirt Size)"
+                                                value={field.label}
+                                                onChange={(e) => {
+                                                  const newFields = [...programForm.registrationFields];
+                                                  newFields[fIdx].label = e.target.value;
+                                                  setProgramForm({...programForm, registrationFields: newFields});
+                                                }}
+                                                className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs outline-none"
+                                              />
+                                              <select 
+                                                value={field.type}
+                                                onChange={(e) => {
+                                                  const newFields = [...programForm.registrationFields];
+                                                  newFields[fIdx].type = e.target.value as any;
+                                                  setProgramForm({...programForm, registrationFields: newFields});
+                                                }}
+                                                className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs outline-none"
+                                              >
+                                                <option value="text">Text Input</option>
+                                                <option value="select">Dropdown Select</option>
+                                              </select>
+                                            </div>
+                                            {field.type === 'select' && (
+                                              <input 
+                                                placeholder="Options (comma separated: S, M, L, XL)"
+                                                value={field.options?.join(', ') || ''}
+                                                onChange={(e) => {
+                                                  const newFields = [...programForm.registrationFields];
+                                                  newFields[fIdx].options = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                                                  setProgramForm({...programForm, registrationFields: newFields});
+                                                }}
+                                                className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-[10px] outline-none"
+                                              />
+                                            )}
+                                          </div>
+                                          <button 
+                                            type="button"
+                                            onClick={() => {
+                                              const newFields = (programForm.registrationFields || []).filter((_, i) => i !== fIdx);
+                                              setProgramForm({...programForm, registrationFields: newFields});
+                                            }}
+                                            className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                                          >
+                                            <Trash2 size={16} />
+                                          </button>
+                                        </div>
+                                      ))}
+                                      {(!programForm.registrationFields || programForm.registrationFields.length === 0) && (
+                                        <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-xl">
+                                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">No custom fields added</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div className="space-y-2">
                             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Extended Details (HTML supported)</label>
                             <textarea 
@@ -6508,7 +9379,7 @@ export default function App() {
                         <div className="flex items-center justify-between">
                           <h3 className="font-display font-medium text-2xl text-slate-900 italic font-bold">Programs List</h3>
                           <button 
-                            onClick={() => setIsAddingProgram(true)}
+                            onClick={handleAddProgram}
                             className="bg-brand-primary text-white px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest flex items-center gap-2 hover:shadow-lg transition-all"
                           >
                             <Plus size={16} />
@@ -6524,7 +9395,7 @@ export default function App() {
                             <h4 className="text-xl font-bold text-slate-900 mb-2">No programs added yet</h4>
                             <p className="text-slate-500 mb-8 max-w-sm mx-auto">Start adding programs to showcase the association's activities on the website.</p>
                             <button 
-                              onClick={() => setIsAddingProgram(true)}
+                              onClick={handleAddProgram}
                               className="bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-bold uppercase tracking-widest"
                             >
                               Add Your First Program
@@ -6545,7 +9416,7 @@ export default function App() {
                                   <div>
                                     <div className="flex items-center gap-2 mb-1">
                                       <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${p.featured ? 'bg-brand-accent/20 text-brand-accent' : 'bg-slate-100 text-slate-400'}`}>
-                                        {p.featured ? 'Featured' : 'Standard'}
+                                        {p.featured ? 'Pinned' : 'Standard'}
                                       </span>
                                       <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${p.status === 'upcoming' ? 'bg-blue-50 text-blue-500' : 'bg-green-50 text-green-500'}`}>
                                         {p.status}
@@ -6566,6 +9437,35 @@ export default function App() {
                                 </div>
 
                                 <div className="flex items-center gap-2">
+                                  {p.registrationEnabled && (
+                                    <>
+                                      <button 
+                                        onClick={() => {
+                                          const url = `${window.location.origin}${window.location.pathname}?reg=${p.id}`;
+                                          navigator.clipboard.writeText(url);
+                                          setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Registration link copied to clipboard!' });
+                                          setTimeout(() => setSaveStatus(null), 3000);
+                                        }}
+                                        className="px-3 py-2 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-slate-100 transition-all flex items-center gap-2 border border-slate-100"
+                                        title="Copy Registration Link"
+                                      >
+                                        <LinkIcon size={12} /> Link
+                                      </button>
+                                      <button 
+                                        onClick={() => setViewingRegistrantsId(p.id)}
+                                        className="px-3 py-2 bg-brand-primary/5 text-brand-primary rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-brand-primary/10 transition-all flex items-center gap-2 border border-brand-primary/10"
+                                      >
+                                        <Users size={12} /> {registrations.filter(r => r.programId === p.id).length} Reg
+                                      </button>
+                                    </>
+                                  )}
+                                  <button 
+                                    onClick={() => toggleProgramFeature(p)}
+                                    className={`p-3 rounded-xl transition-all ${p.featured ? 'text-amber-500 bg-amber-50' : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50'}`}
+                                    title={p.featured ? "Unbookmark" : "Bookmark (Pin to Home)"}
+                                  >
+                                    <Star size={18} fill={p.featured ? "currentColor" : "none"} />
+                                  </button>
                                   <button 
                                     onClick={() => openEditProgram(p)}
                                     className="p-3 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/5 rounded-xl transition-all"
@@ -6660,7 +9560,9 @@ export default function App() {
                                  if (specializedRole === 'finance') return u.membershipStatus === 'pending_finance' || u.membershipStatus === 'declined_finance';
                                  if (specializedRole === 'secretary') return u.membershipStatus === 'pending_secretary' || u.membershipStatus === 'declined_secretary';
                                  return u.membershipStatus && u.membershipStatus !== 'unpaid' && u.membershipStatus !== 'approved';
-                               }).length + (specializedRole === 'finance' ? paymentSubmissions.filter(p => p.status === 'pending').length : 0)
+                               }).length + 
+                               (specializedRole === 'finance' ? paymentSubmissions.filter(p => p.status === 'pending').length : 0) +
+                               ((specializedRole === 'finance' || specializedRole === 'secretary') ? registrations.filter(r => r.status === 'pending').length : 0)
                              }
                            </span>
                          </div>
@@ -6723,6 +9625,67 @@ export default function App() {
                                  }).length === 0 && (
                                    <div className="py-8 text-center text-slate-300 italic text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-100">
                                      No pending registration requests.
+                                   </div>
+                                 )}
+                               </div>
+                             </div>
+                           )}
+
+                           {/* Program Registration Approvals Sub-section */}
+                           {(specializedRole === 'finance' || specializedRole === 'secretary') && (
+                             <div className="space-y-4 pt-8 border-t border-slate-50">
+                               <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                                 <FileText size={14} /> Program Registrations
+                               </h4>
+                               <div className="grid gap-4">
+                                 {registrations
+                                   .filter(r => r.status === 'pending')
+                                   .map(reg => (
+                                   <div key={reg.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-8 hover:border-brand-primary/20 transition-all group">
+                                     <div className="space-y-4">
+                                       <div className="flex items-center gap-3">
+                                         <div className="w-10 h-10 bg-white border border-slate-200 text-brand-primary rounded-xl flex items-center justify-center font-black shadow-sm group-hover:scale-110 transition-transform">
+                                           {reg.userName.charAt(0)}
+                                         </div>
+                                         <div>
+                                           <h4 className="font-bold text-slate-900 leading-none">{reg.userName}</h4>
+                                           <p className="text-[10px] text-slate-400 mt-1">{reg.programTitle}</p>
+                                         </div>
+                                       </div>
+                                       <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                                         <div>
+                                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Method & TXID</span>
+                                           <span className="text-[11px] font-mono text-slate-600 font-bold uppercase">{reg.paymentMethod}: {reg.transactionId}</span>
+                                         </div>
+                                         <div>
+                                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Fee Amount</span>
+                                           <span className="text-sm font-black text-slate-900 tracking-tighter">৳{reg.amount}</span>
+                                         </div>
+                                         <div className="col-span-2 md:col-span-1">
+                                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Submitted</span>
+                                           <span className="text-[11px] text-slate-600 font-bold">{new Date(reg.submittedAt).toLocaleDateString()}</span>
+                                         </div>
+                                       </div>
+                                     </div>
+                                     <div className="flex items-center gap-3 shrink-0">
+                                       <button 
+                                         onClick={() => handleApproveProgramRegistration(reg)}
+                                         className="px-7 py-3 bg-green-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center gap-2"
+                                       >
+                                         <Check size={16} strokeWidth={3} /> Approve
+                                       </button>
+                                       <button 
+                                         onClick={() => handleRejectProgramRegistration(reg.id)}
+                                         className="px-7 py-3 bg-white border border-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:border-red-200 active:scale-95 transition-all flex items-center gap-2"
+                                       >
+                                         <X size={16} strokeWidth={3} /> Reject
+                                       </button>
+                                     </div>
+                                   </div>
+                                 ))}
+                                 {registrations.filter(r => r.status === 'pending').length === 0 && (
+                                   <div className="py-8 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 text-center text-slate-300 italic text-xs">
+                                     No pending program registrations.
                                    </div>
                                  )}
                                </div>
@@ -7156,7 +10119,7 @@ export default function App() {
             </div>
 
             {filteredMembers.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
                 {filteredMembers.map((member, idx) => (
                   <motion.div
                     layout
@@ -7164,49 +10127,44 @@ export default function App() {
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: idx * 0.03 }}
-                    className="bg-white rounded-2xl border-b-4 border-brand-primary/20 hover:border-brand-primary p-2 flex flex-col shadow-sm hover:shadow-xl transition-all group overflow-hidden"
+                    whileHover={{ y: -8, scale: 1.02 }}
+                    className="relative bg-white rounded-[24px] border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-brand-primary/10 flex flex-col h-full group"
                   >
-                    <div className="relative aspect-[3/4] rounded-xl overflow-hidden mb-3 bg-slate-100">
-                      <img 
-                        src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
-                        alt={member.name} 
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-brand-primary/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {/* Profile Image with Colorful Background Accent */}
+                    <div className="relative aspect-[3/4] overflow-hidden bg-brand-primary/5 p-3">
+                      <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/20 via-transparent to-brand-accent/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="w-full h-full rounded-[16px] overflow-hidden border-2 border-white shadow-sm ring-4 ring-brand-primary/5 relative z-10">
+                        <img 
+                          src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
+                          alt={member.name} 
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                        />
+                      </div>
+                      {member.memberCode && (
+                        <div className="absolute top-2 left-2 z-20 bg-brand-primary/90 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
+                          {member.memberCode}
+                        </div>
+                      )}
                       {member.bloodGroup && (
-                        <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
+                        <div className="absolute top-2 right-2 z-20 bg-red-500 text-white px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest shadow-lg">
                           {member.bloodGroup}
                         </div>
                       )}
                     </div>
 
-                    <div className="px-2 pb-3 flex flex-col items-center text-center">
-                      <div className="flex flex-col items-center gap-0.5 mb-1.5">
-                        <h3 className="font-display font-bold text-[13px] text-slate-900 group-hover:text-brand-primary transition-colors line-clamp-1 leading-tight">
-                          {member.name}
-                        </h3>
-                        {member.memberCode && (
-                          <span className="text-[9px] font-black text-brand-primary/60 uppercase tracking-widest">
-                            {member.memberCode}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-slate-500 text-[10px] mb-2 line-clamp-1 font-medium">
-                        {member.designation && <span className="block italic opacity-80 truncate">{member.designation}</span>}
-                        {member.companyName || (member.shift ? `${member.shift} Shift` : 'Member')}
-                      </div>
-                      <div className="inline-flex items-center justify-center px-3 py-0.5 bg-brand-primary/10 text-brand-primary rounded-full text-[9px] font-black uppercase tracking-tighter mb-3">
-                        Session: {member.session || 'N/A'}
-                      </div>
-
-                      {member.phone && (
-                        <div className="flex items-center justify-center gap-1.5 text-slate-500 font-bold text-[10px] mt-auto w-full pt-2 border-t border-slate-50">
-                          <Phone size={10} className="text-brand-primary" />
-                          <a href={`tel:${member.phone}`} className="hover:text-brand-primary transition-colors">
-                            {member.phone}
-                          </a>
+                    {/* Content */}
+                    <div className="p-3 pt-2 flex-1 flex flex-col items-center text-center">
+                      <h3 className="font-display font-bold text-xs text-slate-800 mb-1.5 group-hover:text-brand-primary transition-colors line-clamp-1 w-full">{member.name}</h3>
+                      
+                      <div className="w-full space-y-1.5">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-brand-accent/10 text-brand-accent rounded-full text-[8px] font-black uppercase tracking-widest border border-brand-accent/5">
+                          Session: {member.session || 'N/A'}
                         </div>
-                      )}
+                        
+                        <div className="text-[9px] text-slate-500 font-bold group-hover:text-slate-700 transition-colors line-clamp-1 leading-tight">
+                          {member.companyName || 'EDEA Member'}
+                        </div>
+                      </div>
                     </div>
                   </motion.div>
                 ))}
