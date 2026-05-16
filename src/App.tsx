@@ -32,6 +32,7 @@ import {
   UserPlus,
   Sparkles,
   ArrowRight,
+  UserRound,
   FileText,
   LogIn,
   LogOut,
@@ -77,19 +78,12 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  auth,
-  db,
-  storage, 
+  auth, 
+  db, 
   signInWithGoogle, 
   handleFirestoreError, 
   OperationType 
 } from './lib/firebase';
-import { 
-  ref, 
-  uploadBytes, 
-  getDownloadURL, 
-  deleteObject 
-} from 'firebase/storage';
 import { 
   doc, 
   onSnapshot, 
@@ -173,8 +167,7 @@ interface AssociationConfig {
   privacyPolicy?: string;
   termsOfService?: string;
   constitutionUrl?: string;
-  constitutionName?: string;
-  constitutionUpdatedAt?: any;
+  constitutionDriveLink?: string;
   socialLinks?: {
     facebook?: string;
     twitter?: string;
@@ -221,6 +214,7 @@ interface UserProfile {
   name: string;
   email: string;
   phone?: string;
+  gender?: 'male' | 'female' | 'other';
   memberCode?: string;
   photoURL?: string;
   profilePicture?: string;
@@ -530,7 +524,9 @@ export default function App() {
     heroImages: [],
     logoUrl: '',
     privacyPolicy: '',
-    termsOfService: ''
+    termsOfService: '',
+    constitutionUrl: '',
+    constitutionDriveLink: ''
   });
 
   // Auto-slide effect for hero images
@@ -568,6 +564,8 @@ export default function App() {
   const [editContactPhone, setEditContactPhone] = useState('');
   const [editPrivacyPolicy, setEditPrivacyPolicy] = useState('');
   const [editTermsOfService, setEditTermsOfService] = useState('');
+  const [editConstitutionUrl, setEditConstitutionUrl] = useState('');
+  const [editConstitutionDriveLink, setEditConstitutionDriveLink] = useState('');
   const [editSocialLinks, setEditSocialLinks] = useState({
     facebook: '',
     twitter: '',
@@ -633,90 +631,6 @@ export default function App() {
     } catch (err) {
       console.error('Upload Process Error:', err);
       throw err;
-    }
-  };
-
-  const handleUploadConstitution = async (file: File) => {
-    if (!file) return;
-    if (file.type !== 'application/pdf') {
-      alert('Please upload a PDF file.');
-      return;
-    }
-    
-    setIsUploading('constitution');
-    try {
-      const storageRef = ref(storage, `constitution/edea-rangpur-constitution-${Date.now()}.pdf`);
-      
-      // Delete old file if exists
-      if (associationConfig.constitutionUrl) {
-        try {
-          // Since we don't have the full path stored conveniently in a way that's easy to extract from downloadURL 
-          // without manual parsing or storing the path along with URL.
-          // Better to just overwrite or use a deterministic path if we want simple replacement.
-          // For now, let's just upload the new one and the admin can manage the URL.
-          // Actually, let's use a fixed path for "current" constitution to simplify logic.
-        } catch (e) {
-          console.warn("Could not delete old file", e);
-        }
-      }
-
-      const fixedRef = ref(storage, 'constitution/current_constitution.pdf');
-      await uploadBytes(fixedRef, file);
-      const url = await getDownloadURL(fixedRef);
-      
-      const updatedConfig = {
-        ...associationConfig,
-        constitutionUrl: url,
-        constitutionName: file.name,
-        constitutionUpdatedAt: new Date().toISOString()
-      };
-
-      await setDoc(doc(db, 'config', 'association'), updatedConfig, { merge: true });
-      setAssociationConfig(updatedConfig);
-      
-      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Constitution uploaded successfully!' });
-      setTimeout(() => setSaveStatus(null), 3000);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to upload constitution.');
-    } finally {
-      setIsUploading(null);
-    }
-  };
-
-  const handleDeleteConstitution = async () => {
-    if (!confirm('Are you sure you want to delete the constitution file?')) return;
-    
-    setIsUploading('constitution');
-    try {
-      const fixedRef = ref(storage, 'constitution/current_constitution.pdf');
-      await deleteObject(fixedRef);
-      
-      const updatedConfig = {
-        ...associationConfig,
-        constitutionUrl: '',
-        constitutionName: '',
-        constitutionUpdatedAt: null
-      };
-
-      await setDoc(doc(db, 'config', 'association'), updatedConfig, { merge: true });
-      setAssociationConfig(updatedConfig);
-      
-      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Constitution deleted successfully!' });
-      setTimeout(() => setSaveStatus(null), 3000);
-    } catch (err) {
-      console.error(err);
-      // Even if file deletion fails (e.g. doesn't exist), we still clear the DB entry
-      const updatedConfig = {
-        ...associationConfig,
-        constitutionUrl: '',
-        constitutionName: '',
-        constitutionUpdatedAt: null
-      };
-      await setDoc(doc(db, 'config', 'association'), updatedConfig, { merge: true });
-      setAssociationConfig(updatedConfig);
-    } finally {
-      setIsUploading(null);
     }
   };
 
@@ -1008,7 +922,7 @@ export default function App() {
   const [showStaffLogin, setShowStaffLogin] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [registerStep, setRegisterStep] = useState<'form' | 'otp'>('form');
-  const [registerForm, setRegisterForm] = useState({ name: '', email: '', password: '' });
+  const [registerForm, setRegisterForm] = useState({ name: '', email: '', password: '', gender: '' as 'male' | 'female' | 'other' | '' });
   const [otpCode, setOtpCode] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
@@ -1078,6 +992,7 @@ export default function App() {
         email: registerForm.email,
         memberCode: memberCode,
         role: 'member_candidate',
+        gender: registerForm.gender,
         isVerified: true,
         createdAt: new Date().toISOString()
       });
@@ -1686,8 +1601,7 @@ export default function App() {
           privacyPolicy: data.privacyPolicy || '',
           termsOfService: data.termsOfService || '',
           constitutionUrl: data.constitutionUrl || '',
-          constitutionName: data.constitutionName || '',
-          constitutionUpdatedAt: data.constitutionUpdatedAt || null,
+          constitutionDriveLink: data.constitutionDriveLink || '',
           socialLinks: data.socialLinks || { facebook: '', twitter: '', linkedin: '', youtube: '', instagram: '', whatsapp: '' }
         });
         setEditMission(data.mission || '');
@@ -1704,6 +1618,8 @@ export default function App() {
         setEditContactPhone(data.contactPhone || '');
         setEditPrivacyPolicy(data.privacyPolicy || '');
         setEditTermsOfService(data.termsOfService || '');
+        setEditConstitutionUrl(data.constitutionUrl || '');
+        setEditConstitutionDriveLink(data.constitutionDriveLink || '');
         setEditSocialLinks(data.socialLinks || { facebook: '', twitter: '', linkedin: '', youtube: '', instagram: '', whatsapp: '' });
       }
     }, (error) => {
@@ -2105,6 +2021,8 @@ export default function App() {
         memberCountMode: editMemberCountMode,
         manualMemberCount: editManualMemberCount,
         logoUrl: editLogoUrl,
+        constitutionUrl: editConstitutionUrl,
+        constitutionDriveLink: editConstitutionDriveLink,
         updatedAt: serverTimestamp(),
         updatedBy: user?.uid || (specializedRole ? `specialized_${specializedRole}` : 'system')
       });
@@ -2323,7 +2241,8 @@ export default function App() {
         designation: selectedUser.designation || 'Member', // Their professional job title
         institution: selectedUser.companyName || selectedUser.institution || 'N/A',
         session: selectedUser.session || 'N/A',
-        image: selectedUser.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedUser.id}`,
+        gender: selectedUser.gender || 'other',
+        image: selectedUser.profilePicture || '',
         phone: selectedUser.phone || '',
         userId: selectedUser.id,
         order: executiveMembers.length + 1,
@@ -2798,6 +2717,22 @@ export default function App() {
               </button>
               <button 
                 onClick={() => {
+                  setShowMissionVision(true);
+                  setShowAllMembers(false);
+                  setShowAllProgramsView(false);
+                  setShowFullCommittee(false);
+                  setShowNoticesView(false);
+                  setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
+                  setSelectedProgram(null);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`hover:text-brand-primary transition-colors font-medium ${showMissionVision ? 'text-brand-primary' : 'text-slate-600'}`}
+              >
+                About
+              </button>
+              <button 
+                onClick={() => {
                   setShowAllProgramsView(true);
                   setShowFullCommittee(false);
                   setShowAllMembers(false);
@@ -2846,22 +2781,6 @@ export default function App() {
               </button>
               <button 
                 onClick={() => {
-                  setShowMissionVision(true);
-                  setShowAllMembers(false);
-                  setShowAllProgramsView(false);
-                  setShowFullCommittee(false);
-                  setShowNoticesView(false);
-                  setShowAdminDashboard(false);
-                  setShowMemberDashboard(false);
-                  setSelectedProgram(null);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className={`hover:text-brand-primary transition-colors font-medium ${showMissionVision ? 'text-brand-primary' : 'text-slate-600'}`}
-              >
-                About
-              </button>
-              <button 
-                onClick={() => {
                   setShowFullCommittee(true);
                   setShowAllProgramsView(false);
                   setShowAllMembers(false);
@@ -2903,6 +2822,7 @@ export default function App() {
                     setShowAdminDashboard(true);
                     setShowMemberDashboard(false);
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAllProgramsView(false);
                     setShowFullCommittee(false);
                     setShowAllMembers(false);
@@ -2922,6 +2842,7 @@ export default function App() {
                   onClick={() => {
                     setShowAdminDashboard(true);
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAllProgramsView(false);
                     setShowFullCommittee(false);
                     setShowAllMembers(false);
@@ -2942,6 +2863,7 @@ export default function App() {
                   onClick={() => {
                     setShowAdminDashboard(true);
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAllProgramsView(false);
                     setShowFullCommittee(false);
                     setShowAllMembers(false);
@@ -3025,6 +2947,23 @@ export default function App() {
                   Home
                 </button>
                 <button 
+                  onClick={() => {
+                    setShowMissionVision(true);
+                    setShowAllMembers(false);
+                    setShowAllProgramsView(false);
+                    setShowFullCommittee(false);
+                    setShowNoticesView(false);
+                    setShowAdminDashboard(false);
+                    setShowMemberDashboard(false);
+                    setSelectedProgram(null);
+                    setIsMenuOpen(false);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} 
+                  className={`block w-full text-left font-medium ${showMissionVision ? 'text-brand-primary' : 'text-slate-600'}`}
+                >
+                  About
+                </button>
+                <button 
                   onClick={() => { 
                     setShowAllProgramsView(true); 
                     setShowFullCommittee(false); 
@@ -3089,23 +3028,6 @@ export default function App() {
                   </button>
                 )}
 
-                <button 
-                  onClick={() => {
-                    setShowMissionVision(true);
-                    setShowAllMembers(false);
-                    setShowAllProgramsView(false);
-                    setShowFullCommittee(false);
-                    setShowNoticesView(false);
-                    setShowAdminDashboard(false);
-                    setShowMemberDashboard(false);
-                    setSelectedProgram(null);
-                    setIsMenuOpen(false);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }} 
-                  className={`block w-full text-left font-medium ${showMissionVision ? 'text-brand-primary' : 'text-slate-600'}`}
-                >
-                  About
-                </button>
                 <button 
                   onClick={() => { 
                     setShowFullCommittee(true); 
@@ -3172,6 +3094,7 @@ export default function App() {
                       setShowAllProgramsView(false); 
                       setShowFullCommittee(false); 
                       setShowAllMembers(false); 
+                      setShowMissionVision(false);
                       setSelectedProgram(null); 
                       setAdminTab('profile');
                       setIsMenuOpen(false); 
@@ -4090,7 +4013,7 @@ export default function App() {
     )}
 
         {/* About Page View */}
-        {showMissionVision && (
+        {showMissionVision && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12 scroll-mt-20">
             <div className="flex flex-col sm:flex-row items-center justify-between mb-12 gap-6">
               <div className="space-y-4 text-center sm:text-left">
@@ -4152,48 +4075,44 @@ export default function App() {
             </div>
 
             {/* Constitution Section */}
-            {associationConfig.constitutionUrl && (
+            {(associationConfig.constitutionUrl || associationConfig.constitutionDriveLink) && (
               <motion.div 
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.2 }}
-                className="bg-slate-50 rounded-[3.5rem] p-12 border border-slate-100 relative overflow-hidden"
+                className="p-8 sm:p-12 bg-white rounded-[3.5rem] border border-slate-100 shadow-2xl shadow-slate-200/50 mb-16 relative overflow-hidden"
               >
-                <div className="absolute top-0 right-0 p-12 text-slate-200/50">
-                  <FileText size={160} />
+                <div className="absolute top-0 right-0 p-8 text-brand-primary/5 -rotate-12 translate-x-4 -translate-y-4">
+                   <FileText size={160} />
                 </div>
-                <div className="relative flex flex-col md:flex-row items-center justify-between gap-12">
-                  <div className="max-w-xl text-center md:text-left">
-                    <div className="flex items-center gap-3 mb-4 justify-center md:justify-start">
-                      <div className="bg-brand-primary p-2 rounded-lg text-white">
-                        <FileText size={20} />
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Official Document</span>
-                    </div>
-                    <h2 className="text-4xl font-display font-medium text-slate-900 mb-4 italic">Association Constitution</h2>
-                    <p className="text-slate-500 font-medium leading-relaxed">
-                      Download the official constitution of Electromedical Diploma Engineers Association, Rangpur. This document outlines our bylaws, professional standards, and operational framework.
+                <div className="relative flex flex-col md:flex-row items-center gap-8 md:gap-12">
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 bg-brand-primary/10 rounded-3xl flex items-center justify-center text-brand-primary shrink-0 border border-brand-primary/20">
+                    <FileText size={40} />
+                  </div>
+                  <div className="flex-1 text-center md:text-left space-y-3">
+                    <h3 className="text-3xl font-display font-bold text-slate-900 italic tracking-tight">Association Constitution</h3>
+                    <p className="text-base sm:text-lg text-slate-500 leading-relaxed font-medium max-w-2xl">
+                      The official governing document of EDEA Rangpur, outlining our rules, procedures, and institutional framework to ensure professional standards and organizational integrity.
                     </p>
                   </div>
-                  
-                  <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-xl shadow-slate-200/50 border border-slate-50 min-w-[280px]">
-                    <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mb-2">
-                       <FileText size={32} />
-                    </div>
-                    <div className="text-center mb-6">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">PDF Document</p>
-                      <h4 className="text-sm font-bold text-slate-900 mt-1 line-clamp-1">{associationConfig.constitutionName || 'EDEA_Constitution.pdf'}</h4>
-                    </div>
-                    <a 
-                      href={associationConfig.constitutionUrl} 
-                      download={associationConfig.constitutionName || 'EDEA_Constitution.pdf'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-3 bg-brand-primary text-white px-8 py-4 rounded-2xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.05] active:scale-95 transition-all"
-                    >
-                      <Download size={18} />
-                      Download PDF
-                    </a>
+                  <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto shrink-0 pt-4 md:pt-0">
+                    {associationConfig.constitutionDriveLink ? (
+                      <button 
+                        onClick={() => window.open(associationConfig.constitutionDriveLink, '_blank')}
+                        className="flex items-center justify-center gap-3 px-10 py-5 bg-brand-primary text-white rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-slate-900 transition-all shadow-xl shadow-brand-primary/20 active:scale-95 group w-full sm:w-auto"
+                      >
+                        <Download size={20} className="group-hover:translate-y-0.5 transition-transform" />
+                        Download Constitution
+                      </button>
+                    ) : associationConfig.constitutionUrl ? (
+                      <button 
+                        onClick={() => window.open(associationConfig.constitutionUrl, '_blank')}
+                        className="flex items-center justify-center gap-3 px-10 py-5 bg-slate-100 text-slate-900 rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-brand-primary hover:text-white transition-all active:scale-95 group border border-slate-200 w-full sm:w-auto"
+                      >
+                        <Eye size={20} />
+                        View Constitution
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </motion.div>
@@ -4203,7 +4122,7 @@ export default function App() {
         )}
 
         {/* Full Committee Page View (Integrated) */}
-        {showFullCommittee && (
+        {showFullCommittee && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-2 pb-12 scroll-mt-20">
             <div className="flex flex-col sm:flex-row items-center justify-between mb-6 gap-6">
               <div className="space-y-4 text-center sm:text-left">
@@ -4250,17 +4169,11 @@ export default function App() {
                       </span>
                     </div>
                     <div className="w-full h-full rounded-[16px] overflow-hidden border-2 border-white shadow-sm ring-4 ring-brand-primary/5 relative z-10">
-                      {member.image ? (
-                        <img 
-                          src={member.image} 
-                          alt={member.name} 
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-300">
-                           <Users size={32} />
-                        </div>
-                      )}
+                      <img 
+                        src={member.image || (member.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : member.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`)} 
+                        alt={member.name} 
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                      />
                     </div>
                   </div>
 
@@ -4285,7 +4198,7 @@ export default function App() {
         )}
 
         {/* Full Programs Page View (Integrated) */}
-        {showAllProgramsView && !selectedProgram && (
+        {showAllProgramsView && !selectedProgram && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12 scroll-mt-20">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-16">
               <div className="space-y-4 text-center lg:text-left">
@@ -4435,7 +4348,7 @@ export default function App() {
         )}
 
         {/* Program Detail View (Integrated Update) */}
-        {selectedProgram && (
+        {selectedProgram && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8 md:py-12">
             {/* Minimal Header: Title Left, Date Right */}
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
@@ -4975,7 +4888,7 @@ export default function App() {
                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2 text-center">Your Profile</p>
                   <div className="flex items-center gap-3">
                     <img 
-                      src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                      src={userProfile?.profilePicture || user.photoURL || (userProfile?.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : userProfile?.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`)} 
                       alt="Profile" 
                       className="w-10 h-10 rounded-full object-cover ring-2 ring-white border border-slate-200 shadow-sm"
                     />
@@ -5030,7 +4943,7 @@ export default function App() {
                           <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm text-center">
                             <div className="relative w-32 h-32 mx-auto mb-6 group">
                               <img 
-                                src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                                src={userProfile?.profilePicture || user.photoURL || (userProfile?.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : userProfile?.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`)} 
                                 alt="Profile" 
                                 className="w-full h-full rounded-full object-cover ring-8 ring-brand-primary/5 shadow-inner"
                               />
@@ -5558,7 +5471,7 @@ export default function App() {
                             <div className="relative group">
                               <div className="w-32 h-32 rounded-3xl overflow-hidden ring-4 ring-slate-100 shadow-inner bg-slate-50">
                                 <img 
-                                  src={userProfile?.profilePicture || user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+                                  src={userProfile?.profilePicture || user.photoURL || (userProfile?.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : userProfile?.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`)} 
                                   alt="Profile" 
                                   className="w-full h-full object-cover"
                                 />
@@ -5629,6 +5542,20 @@ export default function App() {
                                  />
                                </div>
                              ))}
+                             <div className="space-y-2">
+                               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Gender</label>
+                               <select 
+                                 required
+                                 value={userProfile?.gender || ''}
+                                 onChange={(e) => setUserProfile({ ...userProfile, gender: e.target.value as any })}
+                                 className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-4 focus:ring-brand-primary/10 outline-none transition-all font-medium text-slate-900 border-b-2 focus:border-brand-primary"
+                               >
+                                 <option value="">Select Gender</option>
+                                 <option value="male">Male</option>
+                                 <option value="female">Female</option>
+                                 <option value="other">Other</option>
+                               </select>
+                             </div>
                              <div className="space-y-2">
                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Blood Group</label>
                                <select 
@@ -5837,18 +5764,18 @@ export default function App() {
                       <span className="font-bold text-sm">Header & Footer (Logo)</span>
                     </button>
                     <button 
-                      onClick={() => setAdminTab('constitution')}
-                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'constitution' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
-                    >
-                      <FileText size={18} />
-                      <span className="font-bold text-sm">Constitution</span>
-                    </button>
-                    <button 
                       onClick={() => setAdminTab('executive')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'executive' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
                     >
                       <Users size={18} />
                       <span className="font-bold text-sm">Executive Committee</span>
+                    </button>
+                    <button 
+                      onClick={() => setAdminTab('constitution')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'constitution' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <FileText size={18} />
+                      <span className="font-bold text-sm">Constitution</span>
                     </button>
                   </>
                 )}
@@ -6285,7 +6212,7 @@ export default function App() {
                                   <div className="flex items-center gap-4">
                                     <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-100 shrink-0">
                                       <img 
-                                        src={u.profilePicture || u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=random`} 
+                                        src={u.profilePicture || u.photoURL || (u.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : u.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=random`)} 
                                         alt={u.name} 
                                         className="w-full h-full object-cover"
                                       />
@@ -6355,87 +6282,6 @@ export default function App() {
                         <p className="text-sm font-medium">No members found in the database.</p>
                       </div>
                     )}
-                  </div>
-                ) : adminTab === 'constitution' ? (
-                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-                      <div className="p-8 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
-                        <div>
-                          <h3 className="font-display font-bold text-xl text-slate-900">Association Constitution</h3>
-                          <p className="text-slate-500 text-xs mt-1 font-medium">Manage the official association constitution document (PDF).</p>
-                        </div>
-                        <div className="bg-brand-primary/10 p-3 rounded-2xl text-brand-primary">
-                          <FileText size={24} />
-                        </div>
-                      </div>
-
-                      <div className="p-8">
-                        {associationConfig.constitutionUrl ? (
-                          <div className="bg-slate-50 rounded-3xl p-8 border border-slate-100 flex flex-col items-center text-center">
-                            <div className="w-20 h-20 bg-green-50 rounded-2xl flex items-center justify-center text-green-600 mb-6 shadow-sm">
-                              <CheckCircle2 size={40} />
-                            </div>
-                            <h4 className="text-lg font-bold text-slate-900 mb-2 truncate max-w-md italic">
-                              {associationConfig.constitutionName || 'Document Uploaded'}
-                            </h4>
-                            <p className="text-slate-400 text-xs font-medium uppercase tracking-widest mb-8">
-                              Last Updated: {associationConfig.constitutionUpdatedAt ? new Date(associationConfig.constitutionUpdatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Recently'}
-                            </p>
-
-                            <div className="flex flex-wrap items-center justify-center gap-4">
-                              <a 
-                                href={associationConfig.constitutionUrl} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-2 bg-brand-primary text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-primary/20 hover:scale-[1.02] transition-all"
-                              >
-                                <ExternalLink size={16} />
-                                View Current PDF
-                              </a>
-                              <button 
-                                onClick={handleDeleteConstitution}
-                                disabled={isUploading === 'constitution'}
-                                className="flex items-center gap-2 bg-red-50 text-red-600 px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-red-100 transition-all border border-red-100"
-                              >
-                                <Trash2 size={16} />
-                                Delete Document
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="border-2 border-dashed border-slate-200 rounded-[2.5rem] p-12 text-center group hover:border-brand-primary/30 transition-all bg-slate-50/50">
-                            <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center text-slate-300 mx-auto mb-6 shadow-sm group-hover:text-brand-primary transition-colors">
-                              <Upload size={32} />
-                            </div>
-                            <h4 className="text-lg font-bold text-slate-600 mb-2 italic">No Constitution Uploaded</h4>
-                            <p className="text-slate-400 text-xs font-medium mb-10 max-w-xs mx-auto">Upload the official association constitution in PDF format for members to download.</p>
-                            
-                            <label className="cursor-pointer inline-flex items-center gap-3 bg-brand-primary text-white px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.05] active:scale-95 transition-all">
-                              {isUploading === 'constitution' ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
-                              {isUploading === 'constitution' ? 'Uploading PDF...' : 'Select PDF File'}
-                              <input 
-                                type="file" 
-                                className="hidden" 
-                                accept="application/pdf"
-                                onChange={(e) => {
-                                  if (e.target.files?.[0]) handleUploadConstitution(e.target.files[0]);
-                                }}
-                              />
-                            </label>
-                          </div>
-                        )}
-
-                        <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-4">
-                          <div className="bg-blue-100 p-2 rounded-lg text-blue-600 shrink-0">
-                            <Info size={16} />
-                          </div>
-                          <div>
-                            <h5 className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-1">Upload Tip</h5>
-                            <p className="text-[10px] text-blue-500 font-medium leading-relaxed">The PDF will be automatically available for download on the public "About" page section for all visitors. Ensure the document is finalized before uploading.</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 ) : adminTab === 'branding' ? (
                   <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -6897,7 +6743,11 @@ export default function App() {
                           {executiveMembers.map((member) => (
                             <div key={member.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-brand-primary/30 transition-all">
                               <div className="flex items-center gap-4">
-                                <img src={member.image} alt="" className="w-12 h-12 rounded-xl object-cover border border-slate-50" />
+                                <img 
+                                  src={member.image || (member.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : member.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`)} 
+                                  alt="" 
+                                  className="w-12 h-12 rounded-xl object-cover border border-slate-50" 
+                                />
                                 <div className="text-left">
                                   <div className="text-[8px] font-black text-brand-primary uppercase tracking-tighter mb-0.5">{member.role}</div>
                                   <div className="text-sm font-bold text-slate-900 leading-tight">{member.name}</div>
@@ -6987,6 +6837,154 @@ export default function App() {
                         >
                           <Save size={16} />
                           Save Committee Settings
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : adminTab === 'constitution' ? (
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                      <h3 className="font-display font-bold text-xl text-slate-900">Association Constitution</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Sync Enabled</span>
+                      </div>
+                    </div>
+                    
+                    <div className="p-8 space-y-8">
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Constitution PDF Document</label>
+                        <div className="flex flex-col gap-6 p-8 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
+                          <div className="flex flex-col items-center text-center gap-4">
+                            <div className={`w-20 h-20 rounded-[1.5rem] flex items-center justify-center ${editConstitutionUrl ? 'bg-brand-primary/10 text-brand-primary' : 'bg-slate-200 text-slate-400'}`}>
+                               <FileText size={32} />
+                            </div>
+                            <div>
+                               <h4 className="font-bold text-slate-900">{editConstitutionUrl ? 'Constitution Document Uploaded' : 'No Constitution Document Uploaded'}</h4>
+                               <p className="text-[10px] text-slate-500 font-medium max-w-xs mx-auto mt-1">Upload the official PDF of the EDEA Rangpur constitution for members to view.</p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+                             <input 
+                               type="file"
+                               id="constitution-upload"
+                               className="hidden"
+                               accept=".pdf"
+                               onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                                 const file = e.target.files?.[0];
+                                 if (file) {
+                                   try {
+                                     setIsUploading('constitution');
+                                     const url = await uploadImage(file);
+                                     setEditConstitutionUrl(url);
+                                     setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'PDF Link ready! Click Save to confirm.' });
+                                     setTimeout(() => setSaveStatus(null), 3000);
+                                   } catch (err) {
+                                     alert(err instanceof Error ? err.message : 'Upload failed');
+                                   } finally {
+                                     setIsUploading(null);
+                                   }
+                                 }
+                               }}
+                             />
+                             <label 
+                               htmlFor="constitution-upload"
+                               className="flex items-center justify-center gap-3 px-8 py-4 bg-white border border-slate-100 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-900 hover:text-white transition-all cursor-pointer shadow-sm group active:scale-95"
+                             >
+                               {isUploading === 'constitution' ? <Loader2 size={18} className="animate-spin text-brand-primary" /> : <Upload size={18} />}
+                               {editConstitutionUrl ? 'Change / Replace PDF' : 'Upload Constitution PDF'}
+                             </label>
+
+                             {editConstitutionUrl && (
+                               <div className="flex gap-2">
+                                 <button 
+                                   onClick={() => window.open(editConstitutionUrl, '_blank')}
+                                   className="flex items-center justify-center gap-3 px-8 py-4 bg-brand-primary/10 text-brand-primary rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-brand-primary/20 transition-all shadow-sm active:scale-95"
+                                 >
+                                   <Eye size={18} />
+                                   View
+                                 </button>
+                                 <button 
+                                   onClick={() => {
+                                     // Direct URL is more reliable if fl_attachment fails
+                                     const downloadUrl = editConstitutionUrl;
+                                     // We use a link with download attribute as a primary attempt
+                                     const link = document.createElement('a');
+                                     link.href = downloadUrl;
+                                     link.setAttribute('download', 'EDEA_Rangpur_Constitution.pdf');
+                                     link.setAttribute('target', '_blank');
+                                     document.body.appendChild(link);
+                                     link.click();
+                                     document.body.removeChild(link);
+                                   }}
+                                   className="flex items-center justify-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all shadow-sm active:scale-95"
+                                 >
+                                   <Download size={18} />
+                                   Download
+                                 </button>
+                                 <button 
+                                   onClick={() => { if(confirm('Are you sure you want to remove the constitution PDF?')) setEditConstitutionUrl(''); }}
+                                   className="p-4 bg-red-50 text-red-500 rounded-2xl hover:bg-red-500 hover:text-white transition-all shadow-sm active:scale-95"
+                                   title="Remove Document"
+                                 >
+                                   <Trash2 size={18} />
+                                 </button>
+                               </div>
+                             )}
+                          </div>
+                          
+                          {editConstitutionUrl && (
+                            <div className="pt-4 flex items-center justify-center gap-2">
+                              <CheckCircle2 size={14} className="text-green-500" />
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">A PDF document is currently active</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-4 pt-4">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Alternative Access (Google Drive Link)</label>
+                        <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 flex flex-col sm:flex-row items-center gap-4">
+                           <div className="w-12 h-12 rounded-xl bg-[#2ea44f]/10 text-[#2ea44f] flex items-center justify-center shrink-0">
+                              <ExternalLink size={24} />
+                           </div>
+                           <input 
+                              type="url"
+                              value={editConstitutionDriveLink}
+                              onChange={(e) => setEditConstitutionDriveLink(e.target.value)}
+                              placeholder="Paste Google Drive shared link here..."
+                              className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all font-medium"
+                           />
+                           {editConstitutionDriveLink && (
+                             <button 
+                               onClick={() => window.open(editConstitutionDriveLink, '_blank')}
+                               className="p-3 bg-brand-primary/10 text-brand-primary rounded-xl hover:bg-brand-primary/20 transition-all active:scale-95"
+                               title="Test Link"
+                             >
+                               <ExternalLink size={18} />
+                             </button>
+                           )}
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-medium px-4">Provide a link to a Google Drive folder or document containing the constitution if preferred.</p>
+                      </div>
+
+                      <div className="pt-8 flex items-center justify-end gap-4 border-t border-slate-50">
+                        <button 
+                          onClick={() => {
+                            setEditConstitutionUrl(associationConfig.constitutionUrl || '');
+                            setEditConstitutionDriveLink(associationConfig.constitutionDriveLink || '');
+                          }}
+                          className="px-6 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-900 transition-all uppercase tracking-widest"
+                        >
+                          Reset
+                        </button>
+                        <button 
+                          onClick={handleSaveConfig}
+                          className="flex items-center gap-3 bg-brand-primary text-white px-10 py-3 rounded-xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                        >
+                          <Save size={16} />
+                          Save Constitution
                         </button>
                       </div>
                     </div>
@@ -8140,18 +8138,18 @@ export default function App() {
                                   <tbody className="divide-y divide-slate-50">
                                     {programLedger.map(entry => {
                                       const entryUser = entry.userId ? allUsers.find(u => u.id === entry.userId) : null;
-                                      const photo = entry.profilePicture || entryUser?.profilePicture || entryUser?.photoURL;
+                                      const photo = entry.profilePicture || entryUser?.profilePicture || entryUser?.photoURL || (entryUser?.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : entryUser?.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : '');
                                       
                                       return (
                                         <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors group">
                                           <td className="px-6 py-4">
                                             <div className="flex items-center gap-3">
                                               <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden shrink-0 border border-slate-200">
-                                                {photo ? (
-                                                  <img src={photo} alt="" className="w-full h-full object-cover" />
-                                                ) : (
-                                                  <Users size={14} className="text-slate-400" />
-                                                )}
+                                                <img 
+                                                  src={photo || `https://api.dicebear.com/7.x/avataaars/svg?seed=${entry.id}`} 
+                                                  alt="" 
+                                                  className="w-full h-full object-cover" 
+                                                />
                                               </div>
                                               <div>
                                                 <div className="text-[11px] font-black text-slate-900 leading-none mb-1">
@@ -8751,11 +8749,11 @@ export default function App() {
                                       <td className="px-8 py-5 text-sm">
                                         <div className="flex items-center gap-3">
                                           <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm shrink-0 bg-slate-100 flex items-center justify-center">
-                                            {m.profilePicture ? (
-                                              <img src={m.profilePicture} alt="" className="w-full h-full object-cover" />
-                                            ) : (
-                                              <Users size={16} className="text-slate-300" />
-                                            )}
+                                            <img 
+                                              src={m.profilePicture || (m.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : m.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.id}`)} 
+                                              alt="" 
+                                              className="w-full h-full object-cover" 
+                                            />
                                           </div>
                                           <div className="flex flex-col">
                                             <span className="font-bold text-slate-900">{m.name}</span>
@@ -10161,7 +10159,7 @@ export default function App() {
           </div>
         )}
 
-        {showNoticesView && (
+        {showNoticesView && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-4 md:py-8">
             {/* Image Lightbox */}
             <AnimatePresence>
@@ -10391,7 +10389,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {showAllMembers && (
+        {showAllMembers && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-4 sm:py-6 scroll-mt-20">
             {/* Compact Header Section */}
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-4 gap-4 bg-white p-4 sm:p-6 rounded-[2rem] border border-slate-100 shadow-sm">
@@ -10454,7 +10452,7 @@ export default function App() {
                       <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/20 via-transparent to-brand-accent/20 opacity-0 group-hover:opacity-100 transition-opacity" />
                       <div className="w-full h-full rounded-[16px] overflow-hidden border-2 border-white shadow-sm ring-4 ring-brand-primary/5 relative z-10">
                         <img 
-                          src={member.profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} 
+                          src={member.profilePicture || (member.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : member.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`)} 
                           alt={member.name} 
                           className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
                         />
@@ -10835,6 +10833,20 @@ export default function App() {
                                 placeholder="Password (min 6 chars)"
                               />
                             </div>
+                            <div className="relative">
+                              <UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                              <select 
+                                required
+                                value={registerForm.gender}
+                                onChange={(e) => setRegisterForm({...registerForm, gender: e.target.value as any})}
+                                className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all text-xs font-medium appearance-none"
+                              >
+                                <option value="">Select Gender</option>
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                                <option value="other">Other</option>
+                              </select>
+                            </div>
                           </div>
 
                           {registerError && (
@@ -11040,7 +11052,7 @@ export default function App() {
                   <div className="flex flex-col items-center text-center space-y-4">
                     <div className="w-32 h-32 rounded-[2.5rem] overflow-hidden border-4 border-white shadow-xl shadow-slate-200/50">
                       <img 
-                        src={selectedAnalysisUser.profilePicture || selectedAnalysisUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedAnalysisUser.name)}&background=random`} 
+                        src={selectedAnalysisUser.profilePicture || selectedAnalysisUser.photoURL || (selectedAnalysisUser.gender === 'male' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack&top=shortHair&clothing=suit' : selectedAnalysisUser.gender === 'female' ? 'https://api.dicebear.com/7.x/avataaars/svg?seed=Molly&top=longHair&clothing=suit' : `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedAnalysisUser.name)}&background=random`)} 
                         className="w-full h-full object-cover"
                       />
                     </div>
