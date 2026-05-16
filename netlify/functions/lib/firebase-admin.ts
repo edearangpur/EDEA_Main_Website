@@ -23,7 +23,8 @@ const getFirebaseAdmin = () => {
     }),
   });
 
-  return { app, db: getFirestore(app) };
+  const dbId = process.env.FIREBASE_DATABASE_ID || "(default)";
+return { app, db: getFirestore(app, dbId) };
 };
 
 export { getFirebaseAdmin };
