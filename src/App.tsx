@@ -72,16 +72,24 @@ import {
   ArrowDownZA,
   Share2,
   Camera,
-  AlignLeft
+  AlignLeft,
+  Heart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  auth, 
-  db, 
+  auth,
+  db,
+  storage, 
   signInWithGoogle, 
   handleFirestoreError, 
   OperationType 
 } from './lib/firebase';
+import { 
+  ref, 
+  uploadBytes, 
+  getDownloadURL, 
+  deleteObject 
+} from 'firebase/storage';
 import { 
   doc, 
   onSnapshot, 
@@ -164,6 +172,9 @@ interface AssociationConfig {
   contactPhone?: string;
   privacyPolicy?: string;
   termsOfService?: string;
+  constitutionUrl?: string;
+  constitutionName?: string;
+  constitutionUpdatedAt?: any;
   socialLinks?: {
     facebook?: string;
     twitter?: string;
@@ -482,6 +493,7 @@ export default function App() {
   const [showAllProgramsView, setShowAllProgramsView] = useState(false);
   const [programHistorySearch, setProgramHistorySearch] = useState('');
   const [showNoticesView, setShowNoticesView] = useState(false);
+  const [showMissionVision, setShowMissionVision] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMemberDashboard, setShowMemberDashboard] = useState(false);
   const [memberTab, setMemberTab] = useState<'overview' | 'programs' | 'directory' | 'settings'>('overview');
@@ -624,12 +636,96 @@ export default function App() {
     }
   };
 
+  const handleUploadConstitution = async (file: File) => {
+    if (!file) return;
+    if (file.type !== 'application/pdf') {
+      alert('Please upload a PDF file.');
+      return;
+    }
+    
+    setIsUploading('constitution');
+    try {
+      const storageRef = ref(storage, `constitution/edea-rangpur-constitution-${Date.now()}.pdf`);
+      
+      // Delete old file if exists
+      if (associationConfig.constitutionUrl) {
+        try {
+          // Since we don't have the full path stored conveniently in a way that's easy to extract from downloadURL 
+          // without manual parsing or storing the path along with URL.
+          // Better to just overwrite or use a deterministic path if we want simple replacement.
+          // For now, let's just upload the new one and the admin can manage the URL.
+          // Actually, let's use a fixed path for "current" constitution to simplify logic.
+        } catch (e) {
+          console.warn("Could not delete old file", e);
+        }
+      }
+
+      const fixedRef = ref(storage, 'constitution/current_constitution.pdf');
+      await uploadBytes(fixedRef, file);
+      const url = await getDownloadURL(fixedRef);
+      
+      const updatedConfig = {
+        ...associationConfig,
+        constitutionUrl: url,
+        constitutionName: file.name,
+        constitutionUpdatedAt: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, 'config', 'association'), updatedConfig, { merge: true });
+      setAssociationConfig(updatedConfig);
+      
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Constitution uploaded successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to upload constitution.');
+    } finally {
+      setIsUploading(null);
+    }
+  };
+
+  const handleDeleteConstitution = async () => {
+    if (!confirm('Are you sure you want to delete the constitution file?')) return;
+    
+    setIsUploading('constitution');
+    try {
+      const fixedRef = ref(storage, 'constitution/current_constitution.pdf');
+      await deleteObject(fixedRef);
+      
+      const updatedConfig = {
+        ...associationConfig,
+        constitutionUrl: '',
+        constitutionName: '',
+        constitutionUpdatedAt: null
+      };
+
+      await setDoc(doc(db, 'config', 'association'), updatedConfig, { merge: true });
+      setAssociationConfig(updatedConfig);
+      
+      setSaveStatus({ id: Date.now().toString(), type: 'success', message: 'Constitution deleted successfully!' });
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      console.error(err);
+      // Even if file deletion fails (e.g. doesn't exist), we still clear the DB entry
+      const updatedConfig = {
+        ...associationConfig,
+        constitutionUrl: '',
+        constitutionName: '',
+        constitutionUpdatedAt: null
+      };
+      await setDoc(doc(db, 'config', 'association'), updatedConfig, { merge: true });
+      setAssociationConfig(updatedConfig);
+    } finally {
+      setIsUploading(null);
+    }
+  };
+
   // Local Programs State
   const [programs, setPrograms] = useState<Program[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [executiveMembers, setExecutiveMembers] = useState<any[]>([]);
   const [sponsorships, setSponsorships] = useState<Sponsorship[]>([]);
-  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding' | 'create_program' | 'program_mgmt' | 'sponsorship'>('general');
+  const [adminTab, setAdminTab] = useState<'general' | 'programs' | 'portal' | 'accounts' | 'finance' | 'fees' | 'approvals' | 'profile' | 'notices' | 'executive' | 'branding' | 'create_program' | 'program_mgmt' | 'sponsorship' | 'constitution'>('general');
   const [selectedProgramForFinance, setSelectedProgramForFinance] = useState<string>('all');
 
   const [isAddingProgram, setIsAddingProgram] = useState(false);
@@ -1589,6 +1685,9 @@ export default function App() {
           contactPhone: data.contactPhone || '+880 1234 567890',
           privacyPolicy: data.privacyPolicy || '',
           termsOfService: data.termsOfService || '',
+          constitutionUrl: data.constitutionUrl || '',
+          constitutionName: data.constitutionName || '',
+          constitutionUpdatedAt: data.constitutionUpdatedAt || null,
           socialLinks: data.socialLinks || { facebook: '', twitter: '', linkedin: '', youtube: '', instagram: '', whatsapp: '' }
         });
         setEditMission(data.mission || '');
@@ -2660,6 +2759,7 @@ export default function App() {
                 setSelectedProgram(null);
                 setShowAllMembers(false);
                 setShowNoticesView(false);
+                setShowMissionVision(false);
                 setShowAdminDashboard(false);
                 window.scrollTo({ top: 0, behavior: 'smooth' }); 
               }}
@@ -2687,6 +2787,7 @@ export default function App() {
                   setSelectedProgram(null);
                   setShowAllMembers(false);
                   setShowNoticesView(false);
+                  setShowMissionVision(false);
                   setShowAdminDashboard(false);
                   setShowMemberDashboard(false);
                   window.scrollTo({ top: 0, behavior: 'smooth' }); 
@@ -2701,6 +2802,7 @@ export default function App() {
                   setShowFullCommittee(false);
                   setShowAllMembers(false);
                   setShowNoticesView(false);
+                  setShowMissionVision(false);
                   setShowAdminDashboard(false);
                   setShowMemberDashboard(false);
                   setSelectedProgram(null);
@@ -2716,6 +2818,7 @@ export default function App() {
                   setShowAllProgramsView(false);
                   setShowFullCommittee(false);
                   setShowAllMembers(false);
+                  setShowMissionVision(false);
                   setShowAdminDashboard(false);
                   setShowMemberDashboard(false);
                   setSelectedProgram(null);
@@ -2731,6 +2834,7 @@ export default function App() {
                   setShowAllProgramsView(false);
                   setShowFullCommittee(false);
                   setShowNoticesView(false);
+                  setShowMissionVision(false);
                   setShowAdminDashboard(false);
                   setShowMemberDashboard(false);
                   setSelectedProgram(null);
@@ -2740,13 +2844,29 @@ export default function App() {
               >
                 Member
               </button>
-              <a href="#mission" className="hover:text-brand-primary transition-colors font-medium text-slate-600">Mission & Vision</a>
+              <button 
+                onClick={() => {
+                  setShowMissionVision(true);
+                  setShowAllMembers(false);
+                  setShowAllProgramsView(false);
+                  setShowFullCommittee(false);
+                  setShowNoticesView(false);
+                  setShowAdminDashboard(false);
+                  setShowMemberDashboard(false);
+                  setSelectedProgram(null);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`hover:text-brand-primary transition-colors font-medium ${showMissionVision ? 'text-brand-primary' : 'text-slate-600'}`}
+              >
+                About
+              </button>
               <button 
                 onClick={() => {
                   setShowFullCommittee(true);
                   setShowAllProgramsView(false);
                   setShowAllMembers(false);
                   setShowNoticesView(false);
+                  setShowMissionVision(false);
                   setShowAdminDashboard(false);
                   setShowMemberDashboard(false);
                   setSelectedProgram(null);
@@ -2761,6 +2881,7 @@ export default function App() {
                     setShowMemberDashboard(true);
                     setShowAdminDashboard(false);
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAllProgramsView(false);
                     setShowFullCommittee(false);
                     setShowAllMembers(false);
@@ -2894,6 +3015,7 @@ export default function App() {
                     setSelectedProgram(null);
                     setShowAllMembers(false);
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAdminDashboard(false);
                     setIsMenuOpen(false); 
                     window.scrollTo({ top: 0, behavior: 'smooth' }); 
@@ -2908,6 +3030,7 @@ export default function App() {
                     setShowFullCommittee(false); 
                     setShowAllMembers(false); 
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAdminDashboard(false);
                     setSelectedProgram(null); 
                     setIsMenuOpen(false); 
@@ -2922,6 +3045,7 @@ export default function App() {
                     setShowAllProgramsView(false); 
                     setShowFullCommittee(false); 
                     setShowAllMembers(false); 
+                    setShowMissionVision(false);
                     setShowAdminDashboard(false);
                     setSelectedProgram(null); 
                     setIsMenuOpen(false); 
@@ -2936,6 +3060,7 @@ export default function App() {
                     setShowAllProgramsView(false); 
                     setShowFullCommittee(false); 
                     setShowNoticesView(false);
+                    setShowMissionVision(false);
                     setShowAdminDashboard(false);
                     setSelectedProgram(null); 
                     setIsMenuOpen(false); 
@@ -2964,13 +3089,30 @@ export default function App() {
                   </button>
                 )}
 
-                <a href="#mission" onClick={() => setIsMenuOpen(false)} className="block text-slate-600 font-medium">Mission & Vision</a>
+                <button 
+                  onClick={() => {
+                    setShowMissionVision(true);
+                    setShowAllMembers(false);
+                    setShowAllProgramsView(false);
+                    setShowFullCommittee(false);
+                    setShowNoticesView(false);
+                    setShowAdminDashboard(false);
+                    setShowMemberDashboard(false);
+                    setSelectedProgram(null);
+                    setIsMenuOpen(false);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} 
+                  className={`block w-full text-left font-medium ${showMissionVision ? 'text-brand-primary' : 'text-slate-600'}`}
+                >
+                  About
+                </button>
                 <button 
                   onClick={() => { 
                     setShowFullCommittee(true); 
                     setShowNoticesView(false);
                     setShowAllProgramsView(false); 
                     setShowAllMembers(false); 
+                    setShowMissionVision(false);
                     setShowAdminDashboard(false);
                     setSelectedProgram(null); 
                     setIsMenuOpen(false); 
@@ -2988,6 +3130,7 @@ export default function App() {
                       setShowAllProgramsView(false); 
                       setShowFullCommittee(false); 
                       setShowAllMembers(false); 
+                      setShowMissionVision(false);
                       setSelectedProgram(null); 
                       setAdminTab('general');
                       setIsMenuOpen(false); 
@@ -3008,6 +3151,7 @@ export default function App() {
                       setShowAllProgramsView(false); 
                       setShowFullCommittee(false); 
                       setShowAllMembers(false); 
+                      setShowMissionVision(false);
                       setSelectedProgram(null); 
                       setAdminTab('finance');
                       setIsMenuOpen(false); 
@@ -3084,7 +3228,7 @@ export default function App() {
       </nav>
 
       {/* Hero / Featured Program (Only show on Home) */}
-      {!showAllProgramsView && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && !showMemberDashboard && (
+      {!showAllProgramsView && !showMissionVision && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && !showMemberDashboard && (
         <header className="relative min-h-[90vh] flex flex-col overflow-hidden px-4">
           {/* Full Background Image Slider */}
           <div className="absolute inset-0 z-0">
@@ -3295,7 +3439,7 @@ export default function App() {
       )}
 
       <main className="flex-grow">
-        {!showAllProgramsView && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && !showMemberDashboard && (
+        {!showAllProgramsView && !showMissionVision && !showFullCommittee && !selectedProgram && !showAllMembers && !showNoticesView && !showAdminDashboard && !showMemberDashboard && (
           <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-16 space-y-24">
             {/* Landing Page Content Sections */}
         
@@ -3657,7 +3801,7 @@ export default function App() {
           </div>
         </section>
 
-        {/* Mission & Vision */}
+        {/* About Us Section */}
         <section id="mission" className="scroll-mt-24">
           <div className="flex items-center justify-between mb-12">
             <div>
@@ -3945,6 +4089,119 @@ export default function App() {
       </div>
     )}
 
+        {/* About Page View */}
+        {showMissionVision && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12 scroll-mt-20">
+            <div className="flex flex-col sm:flex-row items-center justify-between mb-12 gap-6">
+              <div className="space-y-4 text-center sm:text-left">
+                <div className="flex items-center gap-2 justify-center sm:justify-start">
+                  <div className="h-[2px] w-8 bg-brand-primary" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Association Philosophy</span>
+                </div>
+                <h2 className="text-4xl sm:text-5xl font-display font-medium text-slate-900 leading-tight italic">About Us</h2>
+              </div>
+              <button 
+                onClick={() => { setShowMissionVision(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="bg-slate-900 px-6 py-3 rounded-xl text-white hover:bg-brand-primary transition-all shadow-xl shadow-slate-900/10 flex items-center gap-2 font-bold active:scale-95 text-xs uppercase tracking-widest"
+              >
+                <ArrowRight className="rotate-180" size={16} /> Back to Home
+              </button>
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-8 mb-16">
+              {/* Mission Card */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="relative p-12 bg-white rounded-[3.5rem] border border-slate-100 overflow-hidden group shadow-2xl shadow-slate-200/50"
+              >
+                <div className="absolute top-0 right-0 p-12 text-brand-primary/5 group-hover:scale-110 transition-transform duration-700">
+                  <Target size={200} />
+                </div>
+                <div className="relative">
+                  <div className="w-16 h-16 bg-brand-primary/10 rounded-2xl flex items-center justify-center text-brand-primary mb-8 border border-brand-primary/20">
+                    <Target size={32} />
+                  </div>
+                  <h3 className="text-3xl font-display font-bold text-slate-900 mb-6 italic tracking-tight">Our Mission</h3>
+                  <div className="space-y-6 text-xl text-slate-600 leading-relaxed font-medium">
+                    <p className="whitespace-pre-wrap">{associationConfig.mission}</p>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Vision Card */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="relative p-12 bg-slate-900 rounded-[3.5rem] overflow-hidden group shadow-2xl shadow-slate-900/20"
+              >
+                <div className="absolute top-0 right-0 p-12 text-white/5 group-hover:scale-110 transition-transform duration-700">
+                  <Eye size={200} />
+                </div>
+                <div className="relative">
+                  <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center text-brand-accent mb-8 border border-white/10">
+                    <Eye size={32} />
+                  </div>
+                  <h3 className="text-3xl font-display font-bold text-white mb-6 italic tracking-tight">Our Vision</h3>
+                  <div className="space-y-6 text-xl text-slate-300 leading-relaxed font-medium">
+                    <p className="whitespace-pre-wrap">{associationConfig.vision}</p>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* Constitution Section */}
+            {associationConfig.constitutionUrl && (
+              <motion.div 
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-slate-50 rounded-[3.5rem] p-12 border border-slate-100 relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-12 text-slate-200/50">
+                  <FileText size={160} />
+                </div>
+                <div className="relative flex flex-col md:flex-row items-center justify-between gap-12">
+                  <div className="max-w-xl text-center md:text-left">
+                    <div className="flex items-center gap-3 mb-4 justify-center md:justify-start">
+                      <div className="bg-brand-primary p-2 rounded-lg text-white">
+                        <FileText size={20} />
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Official Document</span>
+                    </div>
+                    <h2 className="text-4xl font-display font-medium text-slate-900 mb-4 italic">Association Constitution</h2>
+                    <p className="text-slate-500 font-medium leading-relaxed">
+                      Download the official constitution of Electromedical Diploma Engineers Association, Rangpur. This document outlines our bylaws, professional standards, and operational framework.
+                    </p>
+                  </div>
+                  
+                  <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-xl shadow-slate-200/50 border border-slate-50 min-w-[280px]">
+                    <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mb-2">
+                       <FileText size={32} />
+                    </div>
+                    <div className="text-center mb-6">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">PDF Document</p>
+                      <h4 className="text-sm font-bold text-slate-900 mt-1 line-clamp-1">{associationConfig.constitutionName || 'EDEA_Constitution.pdf'}</h4>
+                    </div>
+                    <a 
+                      href={associationConfig.constitutionUrl} 
+                      download={associationConfig.constitutionName || 'EDEA_Constitution.pdf'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full flex items-center justify-center gap-3 bg-brand-primary text-white px-8 py-4 rounded-2xl text-xs font-black uppercase tracking-[0.1em] shadow-xl shadow-brand-primary/20 hover:scale-[1.05] active:scale-95 transition-all"
+                    >
+                      <Download size={18} />
+                      Download PDF
+                    </a>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+          </div>
+        )}
+
         {/* Full Committee Page View (Integrated) */}
         {showFullCommittee && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-2 pb-12 scroll-mt-20">
@@ -4195,11 +4452,6 @@ export default function App() {
                 </h2>
               </div>
               <div className="flex flex-wrap items-center gap-4">
-                <div className="bg-amber-100 text-amber-700 px-6 py-3 rounded-2xl flex items-center gap-3 border border-amber-200">
-                  <Calendar size={20} className="shrink-0" />
-                  <span className="text-base font-black tracking-tight">{selectedProgram.date}</span>
-                </div>
-
                 {selectedProgram.registrationEnabled && (!selectedProgram.registrationDeadline || new Date(selectedProgram.registrationDeadline) >= new Date()) && (
                   <button 
                     onClick={() => {
@@ -4228,34 +4480,34 @@ export default function App() {
             </div>
 
             {/* Professional Meta Information Line */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm mb-12">
-              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors">
+            <div className="flex flex-col lg:flex-row gap-4 p-4 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm mb-12 items-stretch">
+              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors shrink-0">
                 <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
                   <Calendar size={24} />
                 </div>
                 <div className="flex flex-col">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Program Date</span>
-                  <span className="text-sm font-bold text-slate-800">{selectedProgram.date}</span>
+                  <span className="text-sm font-bold text-slate-800 whitespace-nowrap">{selectedProgram.date}</span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors">
+              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors flex-1 min-w-0">
                 <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center shrink-0">
                   <MapPin size={24} />
                 </div>
-                <div className="flex flex-col">
+                <div className="flex flex-col min-w-0">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Location</span>
-                  <span className="text-sm font-bold text-slate-800">{selectedProgram.location}</span>
+                  <span className="text-sm font-bold text-slate-800 truncate">{selectedProgram.location}</span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors">
+              <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent hover:border-slate-100 transition-colors shrink-0">
                 <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
                   <Tag size={24} />
                 </div>
                 <div className="flex flex-col">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</span>
-                  <span className="text-sm font-bold text-slate-800">{selectedProgram.category}</span>
+                  <span className="text-sm font-bold text-slate-800 whitespace-nowrap">{selectedProgram.category}</span>
                 </div>
               </div>
 
@@ -4264,145 +4516,86 @@ export default function App() {
                   href={selectedProgram.driveLink}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-4 p-4 bg-emerald-50 text-emerald-700 rounded-3xl border border-emerald-100 hover:bg-emerald-100 transition-all group"
+                  title="View Full Album"
+                  className="flex items-center gap-3 px-6 py-4 bg-emerald-50 text-emerald-700 rounded-3xl border border-emerald-100 hover:bg-emerald-100 transition-all group shrink-0"
                 >
-                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <FolderOpen size={24} />
-                  </div>
+                  <FolderOpen size={24} className="group-hover:scale-110 transition-transform" />
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Memories</span>
-                    <span className="text-sm font-black italic">Full Album</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Album</span>
+                    <span className="text-xs font-black italic uppercase">Open</span>
                   </div>
                 </a>
               ) : (
-                <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-3xl border border-transparent opacity-50">
-                  <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center shrink-0">
-                    <ImageIcon size={24} />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Album</span>
-                    <span className="text-sm font-bold text-slate-500 italic">Not Linked</span>
-                  </div>
+                <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 text-slate-400 rounded-3xl border border-slate-100 shrink-0 opacity-50">
+                  <ImageIcon size={22} />
+                  <span className="text-[10px] font-black uppercase tracking-widest">No Album</span>
                 </div>
               )}
             </div>
 
             {/* Single Column Flow */}
             <div className="space-y-12">
-              {/* About Section */}
+              {/* Main Content Section: Overview + Highlights Sidebar */}
               <section className="bg-white p-8 md:p-12 rounded-[3.5rem] border border-slate-100 shadow-sm relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 blur-[100px] rounded-full -mr-32 -mt-32" />
                 
-                <div className="flex flex-col lg:flex-row gap-12 relative z-10">
-                  <div className="lg:w-2/3 space-y-8">
+                <div className="flex flex-col lg:flex-row gap-16 relative z-10">
+                  <div className="lg:w-2/3 space-y-10">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
-                        <Info size={20} />
+                        <AlignLeft size={20} />
                       </div>
-                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Program Intent & Overview</h3>
+                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Extended Program Details</h3>
                     </div>
-                    <p className="text-xl text-slate-700 leading-relaxed font-bold italic whitespace-pre-line border-l-4 border-brand-primary/20 pl-6">
-                      "{selectedProgram.description}"
-                    </p>
+
+                    {selectedProgram.details ? (
+                      <div className="pt-6 border-t border-slate-50">
+                        <div 
+                          className="details-content prose prose-slate max-w-none text-slate-600 prose-headings:text-slate-800 prose-p:leading-relaxed prose-img:rounded-3xl"
+                          dangerouslySetInnerHTML={{ __html: selectedProgram.details }} 
+                        />
+                      </div>
+                    ) : (
+                      <div className="pt-10 border-t border-slate-50 italic text-slate-400">
+                        No additional details available for this program.
+                      </div>
+                    )}
                   </div>
 
                   <div className="lg:w-1/3">
-                    <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 space-y-6">
-                      <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                    <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 sticky top-24">
+                      <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2 mb-8">
                         <Star size={16} className="text-brand-primary" /> Key Highlights
                       </h4>
-                      <div className="space-y-3">
-                        {selectedProgram.highlights?.map((h, idx) => (
-                          <div key={idx} className="flex items-center gap-3 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:translate-x-1 transition-transform">
-                            <Sparkles size={14} className="text-brand-primary" />
-                            <span className="text-sm font-bold text-slate-700">{h}</span>
+                      <div className="space-y-4">
+                        {selectedProgram.highlights && selectedProgram.highlights.length > 0 ? (
+                          selectedProgram.highlights.map((h, idx) => (
+                            <div key={idx} className="flex items-center gap-3 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm group">
+                              <Sparkles size={14} className="text-brand-primary group-hover:rotate-12 transition-transform" />
+                              <span className="text-sm font-bold text-slate-700">{h}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="space-y-6">
+                             <div className="flex items-center gap-3">
+                               <MapPin size={16} className="text-rose-500" />
+                               <span className="text-sm font-bold text-slate-600 truncate">{selectedProgram.location}</span>
+                             </div>
+                             <div className="flex items-center gap-3">
+                               <Tag size={16} className="text-amber-500" />
+                               <span className="text-sm font-bold text-slate-600 uppercase tracking-widest">{selectedProgram.category}</span>
+                             </div>
+                             <div className="flex items-center gap-3">
+                               <div className={`w-2 h-2 rounded-full ${selectedProgram.status === 'upcoming' ? 'bg-green-500' : 'bg-slate-300'}`} />
+                               <span className="text-sm font-bold text-slate-600 uppercase tracking-widest">{selectedProgram.status}</span>
+                             </div>
                           </div>
-                        ))}
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
               </section>
-
-              {/* Extended Details Section */}
-              {selectedProgram.details && (
-                <section className="bg-white p-8 md:p-12 rounded-[3.5rem] border border-slate-100 shadow-sm relative overflow-hidden">
-                  <div className="absolute bottom-0 left-0 w-64 h-64 bg-brand-primary/5 blur-[100px] rounded-full -ml-32 -mb-32" />
-                  <div className="flex items-center gap-3 mb-10 relative z-10">
-                    <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
-                      <AlignLeft size={20} />
-                    </div>
-                    <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Extended Program Details</h3>
-                  </div>
-                  <div 
-                    className="details-content prose prose-slate max-w-none text-slate-600 prose-headings:text-slate-800 prose-p:leading-relaxed prose-img:rounded-3xl relative z-10 border-t border-slate-50 pt-10"
-                    dangerouslySetInnerHTML={{ __html: selectedProgram.details }} 
-                  />
-                </section>
-              )}
-
-              {/* Program Gallery & Album (New) */}
-              {(selectedProgram.gallery && selectedProgram.gallery.length > 0) && (
-                <section className="space-y-8">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
-                        <ImageIcon size={20} />
-                      </div>
-                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic font-display">Program Memories & Impact</h3>
-                    </div>
-                    {selectedProgram.driveLink && (
-                      <a 
-                        href={selectedProgram.driveLink} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/20 group"
-                      >
-                        <FolderOpen size={16} className="group-hover:rotate-12 transition-transform" /> 
-                        View Full Photo Album
-                      </a>
-                    )}
-                  </div>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 h-[400px] md:h-[500px]">
-                    {selectedProgram.gallery.slice(0, 5).map((img, idx) => (
-                      <motion.div 
-                        key={idx}
-                        initial={{ opacity: 0, y: 20 }}
-                        whileInView={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.1 }}
-                        whileHover={{ scale: 1.02 }}
-                        className={`relative rounded-3xl overflow-hidden shadow-xl border-4 border-white ${idx === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1'}`}
-                      >
-                        <img src={img} alt={`Gallery ${idx}`} className="w-full h-full object-cover transition-transform duration-700 hover:scale-110" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity flex items-end p-6">
-                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Memory {idx + 1}</span>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-
-                  {selectedProgram.driveLink && !selectedProgram.gallery?.length && (
-                    <div className="bg-slate-50 p-12 rounded-[3rem] border border-slate-100 text-center space-y-6">
-                       <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm">
-                         <FolderOpen size={32} className="text-brand-primary opacity-20" />
-                       </div>
-                       <div className="max-w-md mx-auto space-y-2">
-                         <h4 className="text-xl font-bold text-slate-800 italic font-display">Archive Available</h4>
-                         <p className="text-sm text-slate-500 font-medium">All high-resolution photos for this program are archived in an external album.</p>
-                       </div>
-                       <a 
-                          href={selectedProgram.driveLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 px-8 py-3 bg-brand-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-primary-dark transition-all shadow-lg shadow-brand-primary/20"
-                       >
-                         Open Album <ExternalLink size={14} />
-                       </a>
-                    </div>
-                  )}
-                </section>
-              )}
 
               {/* Detailed Financial Statement */}
               {selectedProgram.status === 'completed' && (
@@ -4575,31 +4768,69 @@ export default function App() {
                 </section>
               )}
 
-              {/* Gallery Bottom */}
-              {selectedProgram.gallery && selectedProgram.gallery.length > 0 && (
-                <section className="space-y-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
-                      <ImageIcon size={20} />
-                    </div>
-                    <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">Program Gallery</h3>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                    {selectedProgram.gallery.map((img, i) => (
-                      <div 
-                        key={i} 
-                        onClick={() => setFullScreenImage(i)}
-                        className="aspect-square rounded-[2rem] overflow-hidden hover:scale-105 transition-all shadow-lg group relative border-4 border-white cursor-zoom-in active:scale-95"
-                      >
-                        {img && <img src={img} alt={`Gallery ${i}`} className="w-full h-full object-cover" />}
-                        <div className="absolute inset-0 bg-brand-primary/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <ExternalLink className="text-white drop-shadow-lg scale-0 group-hover:scale-100 transition-transform" size={24} />
-                        </div>
+              {/* Program Gallery & Album (New) */}
+              {(selectedProgram.gallery && selectedProgram.gallery.length > 0) && (
+                <section className="space-y-8">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-brand-primary/10 text-brand-primary rounded-2xl flex items-center justify-center">
+                        <ImageIcon size={20} />
                       </div>
+                      <h3 className="text-2xl font-bold text-slate-800 tracking-tight italic font-display">Program Memories & Impact</h3>
+                    </div>
+                    {selectedProgram.driveLink && (
+                      <a 
+                        href={selectedProgram.driveLink} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/20 group"
+                      >
+                        <FolderOpen size={16} className="group-hover:rotate-12 transition-transform" /> 
+                        View Full Photo Album
+                      </a>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 h-[400px] md:h-[500px]">
+                    {selectedProgram.gallery.slice(0, 5).map((img, idx) => (
+                      <motion.div 
+                        key={idx}
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        whileHover={{ scale: 1.02 }}
+                        className={`relative rounded-3xl overflow-hidden shadow-xl border-4 border-white ${idx === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1'}`}
+                      >
+                        <img src={img} alt={`Gallery ${idx}`} className="w-full h-full object-cover transition-transform duration-700 hover:scale-110" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity flex items-end p-6">
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Memory {idx + 1}</span>
+                        </div>
+                      </motion.div>
                     ))}
                   </div>
+
+                  {selectedProgram.driveLink && !selectedProgram.gallery?.length && (
+                    <div className="bg-slate-50 p-12 rounded-[3rem] border border-slate-100 text-center space-y-6">
+                       <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm">
+                         <FolderOpen size={32} className="text-brand-primary opacity-20" />
+                       </div>
+                       <div className="max-w-md mx-auto space-y-2">
+                         <h4 className="text-xl font-bold text-slate-800 italic font-display">Archive Available</h4>
+                         <p className="text-sm text-slate-500 font-medium">All high-resolution photos for this program are archived in an external album.</p>
+                       </div>
+                       <a 
+                          href={selectedProgram.driveLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-8 py-3 bg-brand-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-primary-dark transition-all shadow-lg shadow-brand-primary/20"
+                       >
+                         Open Album <ExternalLink size={14} />
+                       </a>
+                    </div>
+                  )}
                 </section>
               )}
+
             </div>
           </div>
         )}
@@ -5606,6 +5837,13 @@ export default function App() {
                       <span className="font-bold text-sm">Header & Footer (Logo)</span>
                     </button>
                     <button 
+                      onClick={() => setAdminTab('constitution')}
+                      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'constitution' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
+                    >
+                      <FileText size={18} />
+                      <span className="font-bold text-sm">Constitution</span>
+                    </button>
+                    <button 
                       onClick={() => setAdminTab('executive')}
                       className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${adminTab === 'executive' ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/20' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-100'}`}
                     >
@@ -6117,6 +6355,87 @@ export default function App() {
                         <p className="text-sm font-medium">No members found in the database.</p>
                       </div>
                     )}
+                  </div>
+                ) : adminTab === 'constitution' ? (
+                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="p-8 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
+                        <div>
+                          <h3 className="font-display font-bold text-xl text-slate-900">Association Constitution</h3>
+                          <p className="text-slate-500 text-xs mt-1 font-medium">Manage the official association constitution document (PDF).</p>
+                        </div>
+                        <div className="bg-brand-primary/10 p-3 rounded-2xl text-brand-primary">
+                          <FileText size={24} />
+                        </div>
+                      </div>
+
+                      <div className="p-8">
+                        {associationConfig.constitutionUrl ? (
+                          <div className="bg-slate-50 rounded-3xl p-8 border border-slate-100 flex flex-col items-center text-center">
+                            <div className="w-20 h-20 bg-green-50 rounded-2xl flex items-center justify-center text-green-600 mb-6 shadow-sm">
+                              <CheckCircle2 size={40} />
+                            </div>
+                            <h4 className="text-lg font-bold text-slate-900 mb-2 truncate max-w-md italic">
+                              {associationConfig.constitutionName || 'Document Uploaded'}
+                            </h4>
+                            <p className="text-slate-400 text-xs font-medium uppercase tracking-widest mb-8">
+                              Last Updated: {associationConfig.constitutionUpdatedAt ? new Date(associationConfig.constitutionUpdatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Recently'}
+                            </p>
+
+                            <div className="flex flex-wrap items-center justify-center gap-4">
+                              <a 
+                                href={associationConfig.constitutionUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 bg-brand-primary text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-primary/20 hover:scale-[1.02] transition-all"
+                              >
+                                <ExternalLink size={16} />
+                                View Current PDF
+                              </a>
+                              <button 
+                                onClick={handleDeleteConstitution}
+                                disabled={isUploading === 'constitution'}
+                                className="flex items-center gap-2 bg-red-50 text-red-600 px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-red-100 transition-all border border-red-100"
+                              >
+                                <Trash2 size={16} />
+                                Delete Document
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="border-2 border-dashed border-slate-200 rounded-[2.5rem] p-12 text-center group hover:border-brand-primary/30 transition-all bg-slate-50/50">
+                            <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center text-slate-300 mx-auto mb-6 shadow-sm group-hover:text-brand-primary transition-colors">
+                              <Upload size={32} />
+                            </div>
+                            <h4 className="text-lg font-bold text-slate-600 mb-2 italic">No Constitution Uploaded</h4>
+                            <p className="text-slate-400 text-xs font-medium mb-10 max-w-xs mx-auto">Upload the official association constitution in PDF format for members to download.</p>
+                            
+                            <label className="cursor-pointer inline-flex items-center gap-3 bg-brand-primary text-white px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.05] active:scale-95 transition-all">
+                              {isUploading === 'constitution' ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
+                              {isUploading === 'constitution' ? 'Uploading PDF...' : 'Select PDF File'}
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept="application/pdf"
+                                onChange={(e) => {
+                                  if (e.target.files?.[0]) handleUploadConstitution(e.target.files[0]);
+                                }}
+                              />
+                            </label>
+                          </div>
+                        )}
+
+                        <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-4">
+                          <div className="bg-blue-100 p-2 rounded-lg text-blue-600 shrink-0">
+                            <Info size={16} />
+                          </div>
+                          <div>
+                            <h5 className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-1">Upload Tip</h5>
+                            <p className="text-[10px] text-blue-500 font-medium leading-relaxed">The PDF will be automatically available for download on the public "About" page section for all visitors. Ensure the document is finalized before uploading.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : adminTab === 'branding' ? (
                   <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
